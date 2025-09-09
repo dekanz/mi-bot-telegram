@@ -3,6 +3,7 @@ import logging
 import os
 import json
 import time
+import requests
 from telebot import types
 
 # Configuración del bot
@@ -40,8 +41,23 @@ def save_registered_users(users):
     except Exception as e:
         logging.error(f"Error al guardar usuarios registrados: {e}")
 
+def clear_webhook():
+    """Limpia el webhook para evitar conflictos"""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        response = requests.get(url)
+        if response.status_code == 200:
+            print("✅ Webhook limpiado correctamente")
+        else:
+            print(f"⚠️ Error al limpiar webhook: {response.status_code}")
+    except Exception as e:
+        print(f"⚠️ Error al limpiar webhook: {e}")
+
 # Cargar usuarios registrados al iniciar
 registered_users = load_registered_users()
+
+# Limpiar webhook al iniciar
+clear_webhook()
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -308,4 +324,74 @@ def mention_admins(message):
             mention_text += " ".join(mentions)
             bot.send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
-            bot.
+            bot.reply_to(message, "❌ No se encontraron administradores.")
+            
+    except Exception as e:
+        logging.error(f"Error al mencionar administradores: {e}")
+        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['count'])
+def count_members(message):
+    """Cuenta los miembros del grupo"""
+    try:
+        chat_id = message.chat.id
+        
+        if message.chat.type not in ['group', 'supergroup']:
+            bot.reply_to(message, "❌ Este comando solo funciona en grupos.")
+            return
+        
+        member_count = bot.get_chat_member_count(chat_id)
+        administrators = bot.get_chat_administrators(chat_id)
+        
+        admin_count = len([admin for admin in administrators if not admin.user.is_bot])
+        
+        count_text = f"""
+📊 **INFORMACIÓN DEL GRUPO**
+
+ Total de miembros: {member_count}
+ Administradores: {admin_count}
+ Miembros normales: {member_count - admin_count}
+📝 Usuarios registrados: {len(registered_users)}
+
+**Nota:** Solo puedo mencionar a administradores por limitaciones de la API de Telegram.
+        """
+        
+        bot.reply_to(message, count_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logging.error(f"Error al contar miembros: {e}")
+        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['registered'])
+def show_registered_users(message):
+    """Muestra los usuarios registrados"""
+    try:
+        if not registered_users:
+            bot.reply_to(message, "📝 No hay usuarios registrados.")
+            return
+        
+        count_text = f"""
+ **USUARIOS REGISTRADOS**
+
+Total registrados: {len(registered_users)}
+
+Los usuarios registrados recibirán menciones especiales en los comandos de alerta.
+        """
+        
+        bot.reply_to(message, count_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logging.error(f"Error al mostrar usuarios registrados: {e}")
+        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+if __name__ == '__main__':
+    print(" Iniciando Bot de Menciones...")
+    print(f"Token configurado: {'✅' if BOT_TOKEN else '❌'}")
+    print(f"Usuarios registrados: {len(registered_users)}")
+    
+    try:
+        bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    except KeyboardInterrupt:
+        print("\n🛑 Bot detenido por el usuario")
+    except Exception as e:
+        print(f"❌ Error: {e}")
