@@ -31,7 +31,7 @@ logging.basicConfig(
 )
 
 # Base de datos para usuarios registrados
-DATABASE_FILE = 'bot_database.db'
+DATABASE_FILE = '/tmp/bot_database.db'  # Usar /tmp para persistencia en Render
 
 def init_database():
     """Inicializa la base de datos SQLite"""
@@ -232,9 +232,9 @@ def clean_name_for_mention(name):
     if not name.strip():
         name = "Usuario"
     
-    # Limitar longitud
-    if len(name) > 30:
-        name = name[:27] + "..."
+    # Limitar longitud pero no cortar tanto
+    if len(name) > 25:
+        name = name[:22] + "..."
     
     return name
 
@@ -288,13 +288,6 @@ def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
         try:
             # Si hay error de parseo de Markdown, intentar sin formato
             if parse_mode == 'Markdown':
-                # Validar si el texto es seguro para Markdown
-                if not validate_markdown_text(text):
-                    logging.warning("Texto no es seguro para Markdown, enviando sin formato")
-                    clean_text = clean_text_for_telegram(text)
-                    bot.send_message(chat_id, clean_text, parse_mode=None)
-                    return True
-                
                 try:
                     bot.send_message(chat_id, text, parse_mode=parse_mode)
                     return True
@@ -330,13 +323,6 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
         try:
             # Si hay error de parseo de Markdown, intentar sin formato
             if parse_mode == 'Markdown':
-                # Validar si el texto es seguro para Markdown
-                if not validate_markdown_text(text):
-                    logging.warning("Texto no es seguro para Markdown, enviando sin formato")
-                    clean_text = clean_text_for_telegram(text)
-                    bot.reply_to(message, clean_text, parse_mode=None)
-                    return True
-                
                 try:
                     bot.reply_to(message, text, parse_mode=parse_mode)
                     return True
