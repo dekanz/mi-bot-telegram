@@ -4,8 +4,10 @@ import os
 import json
 import time
 import requests
+import socket
 from telebot import types
 from requests.exceptions import ConnectionError, Timeout, RequestException
+from urllib3.exceptions import NewConnectionError, MaxRetryError
 
 # Configuración del bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -18,7 +20,14 @@ if not BOT_TOKEN:
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Configurar logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log')
+    ]
+)
 
 # Archivo para guardar usuarios registrados
 REGISTERED_USERS_FILE = 'registered_users.json'
@@ -42,17 +51,45 @@ def save_registered_users(users):
     except Exception as e:
         logging.error(f"Error al guardar usuarios registrados: {e}")
 
+def check_network_connectivity():
+    """Verifica la conectividad de red antes de iniciar el bot"""
+    try:
+        # Verificar conectividad básica
+        socket.create_connection(("8.8.8.8", 53), timeout=5)
+        logging.info("✅ Conectividad de red básica verificada")
+        
+        # Verificar conectividad a Telegram API
+        response = requests.get("https://api.telegram.org", timeout=10)
+        if response.status_code == 200:
+            logging.info("✅ Conectividad a Telegram API verificada")
+            return True
+        else:
+            logging.warning(f"⚠️ Telegram API respondió con código: {response.status_code}")
+            return False
+    except Exception as e:
+        logging.error(f"❌ Error de conectividad: {e}")
+        return False
+
 def clear_webhook():
     """Limpia el webhook para evitar conflictos"""
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            print("✅ Webhook limpiado correctamente")
-        else:
-            print(f"⚠️ Error al limpiar webhook: {response.status_code}")
-    except Exception as e:
-        print(f"⚠️ Error al limpiar webhook: {e}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                logging.info("✅ Webhook limpiado correctamente")
+                return True
+            else:
+                logging.warning(f"⚠️ Error al limpiar webhook: {response.status_code}")
+        except (ConnectionError, Timeout, NewConnectionError, MaxRetryError) as e:
+            logging.warning(f"⚠️ Intento {attempt + 1} fallido al limpiar webhook: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+        except Exception as e:
+            logging.error(f"❌ Error inesperado al limpiar webhook: {e}")
+            break
+    return False
 
 def escape_markdown(text):
     """Escapa caracteres especiales de Markdown"""
@@ -61,44 +98,57 @@ def escape_markdown(text):
         text = text.replace(char, f'\\{char}')
     return text
 
-def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=3):
+def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
     """Envía un mensaje con reintentos en caso de error de conexión"""
     for attempt in range(max_retries):
         try:
             bot.send_message(chat_id, text, parse_mode=parse_mode)
             return True
-        except (ConnectionError, Timeout, RequestException) as e:
-            logging.warning(f"Intento {attempt + 1} fallido: {e}")
+        except (ConnectionError, Timeout, RequestException, NewConnectionError, MaxRetryError) as e:
+            logging.warning(f"Intento {attempt + 1} fallido al enviar mensaje: {e}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Delay exponencial
+                wait_time = min(2 ** attempt, 30)  # Máximo 30 segundos
+                logging.info(f"Esperando {wait_time} segundos antes del siguiente intento...")
+                time.sleep(wait_time)
             else:
-                logging.error(f"Error después de {max_retries} intentos: {e}")
+                logging.error(f"Error después de {max_retries} intentos al enviar mensaje: {e}")
                 return False
         except Exception as e:
-            logging.error(f"Error inesperado: {e}")
+            logging.error(f"Error inesperado al enviar mensaje: {e}")
             return False
     return False
 
-def safe_reply_to(message, text, parse_mode='Markdown', max_retries=3):
+def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
     """Responde a un mensaje con reintentos en caso de error de conexión"""
     for attempt in range(max_retries):
         try:
             bot.reply_to(message, text, parse_mode=parse_mode)
             return True
-        except (ConnectionError, Timeout, RequestException) as e:
-            logging.warning(f"Intento {attempt + 1} fallido: {e}")
+        except (ConnectionError, Timeout, RequestException, NewConnectionError, MaxRetryError) as e:
+            logging.warning(f"Intento {attempt + 1} fallido al responder mensaje: {e}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Delay exponencial
+                wait_time = min(2 ** attempt, 30)  # Máximo 30 segundos
+                logging.info(f"Esperando {wait_time} segundos antes del siguiente intento...")
+                time.sleep(wait_time)
             else:
-                logging.error(f"Error después de {max_retries} intentos: {e}")
+                logging.error(f"Error después de {max_retries} intentos al responder mensaje: {e}")
                 return False
         except Exception as e:
-            logging.error(f"Error inesperado: {e}")
+            logging.error(f"Error inesperado al responder mensaje: {e}")
             return False
     return False
 
 # Cargar usuarios registrados al iniciar
 registered_users = load_registered_users()
+
+# Verificar conectividad antes de iniciar
+if not check_network_connectivity():
+    logging.error("❌ No se pudo verificar la conectividad de red. El bot puede no funcionar correctamente.")
+    logging.info("🔄 Reintentando en 30 segundos...")
+    time.sleep(30)
+    if not check_network_connectivity():
+        logging.error("❌ Conectividad de red no disponible. Saliendo...")
+        exit(1)
 
 # Limpiar webhook al iniciar
 clear_webhook()
@@ -512,14 +562,51 @@ Los usuarios registrados recibirán menciones especiales en los comandos de aler
         logging.error(f"Error al mostrar usuarios registrados: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
-if __name__ == '__main__':
-    print(" Iniciando Bot de Menciones...")
-    print(f"Token configurado: {'✅' if BOT_TOKEN else '❌'}")
-    print(f"Usuarios registrados: {len(registered_users)}")
+def start_bot_with_retry():
+    """Inicia el bot con reintentos automáticos en caso de error de conexión"""
+    max_restart_attempts = 10
+    restart_delay = 60  # 1 minuto
     
-    try:
-        bot.infinity_polling(timeout=10, long_polling_timeout=5)
-    except KeyboardInterrupt:
-        print("\n🛑 Bot detenido por el usuario")
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    for attempt in range(max_restart_attempts):
+        try:
+            logging.info(f"🚀 Iniciando Bot de Menciones (intento {attempt + 1}/{max_restart_attempts})...")
+            logging.info(f"Token configurado: {'✅' if BOT_TOKEN else '❌'}")
+            logging.info(f"Usuarios registrados: {len(registered_users)}")
+            
+            # Configurar el bot con timeouts más largos
+            bot.infinity_polling(
+                timeout=30, 
+                long_polling_timeout=20,
+                interval=1,
+                none_stop=True
+            )
+            
+        except (ConnectionError, Timeout, NewConnectionError, MaxRetryError) as e:
+            logging.error(f"❌ Error de conexión en intento {attempt + 1}: {e}")
+            if attempt < max_restart_attempts - 1:
+                logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
+                time.sleep(restart_delay)
+                # Verificar conectividad antes de reintentar
+                if check_network_connectivity():
+                    logging.info("✅ Conectividad restaurada, reintentando...")
+                else:
+                    logging.warning("⚠️ Conectividad aún no disponible")
+            else:
+                logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
+                break
+                
+        except KeyboardInterrupt:
+            logging.info("\n🛑 Bot detenido por el usuario")
+            break
+            
+        except Exception as e:
+            logging.error(f"❌ Error inesperado: {e}")
+            if attempt < max_restart_attempts - 1:
+                logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
+                time.sleep(restart_delay)
+            else:
+                logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
+                break
+
+if __name__ == '__main__':
+    start_bot_with_retry()
