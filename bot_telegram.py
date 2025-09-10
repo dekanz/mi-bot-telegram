@@ -547,8 +547,8 @@ def unregister_user(message):
         
         # Remover de la base de datos
         if remove_registered_user(user_id):
-        registered_users.remove(user_id)
-        safe_reply_to(message, "✅ Te has desregistrado de las menciones.")
+            registered_users.remove(user_id)
+            safe_reply_to(message, "✅ Te has desregistrado de las menciones.")
         else:
             safe_reply_to(message, "❌ Ocurrió un error al desregistrarte de la base de datos. Intenta de nuevo.")
         
