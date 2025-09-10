@@ -50,6 +50,17 @@ def init_database():
             )
         ''')
         
+        # Crear tabla de respaldo para logs
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_registration_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                action TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                details TEXT
+            )
+        ''')
+        
         conn.commit()
         conn.close()
         logging.info("✅ Base de datos inicializada correctamente")
@@ -57,6 +68,36 @@ def init_database():
     except Exception as e:
         logging.error(f"❌ Error al inicializar base de datos: {e}")
         return False
+
+def backup_database():
+    """Crea un respaldo de la base de datos"""
+    try:
+        import shutil
+        backup_file = f"{DATABASE_FILE}.backup"
+        shutil.copy2(DATABASE_FILE, backup_file)
+        logging.info(f"✅ Respaldo creado: {backup_file}")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error al crear respaldo: {e}")
+        return False
+
+def log_user_action(user_id, action, details=""):
+    """Registra una acción del usuario en el log"""
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO user_registration_log (user_id, action, details)
+            VALUES (?, ?, ?)
+        ''', (user_id, action, details))
+        
+        conn.commit()
+        conn.close()
+        logging.info(f"📝 Log registrado: Usuario {user_id} - {action}")
+        
+    except Exception as e:
+        logging.error(f"❌ Error al registrar log: {e}")
 
 def load_registered_users():
     """Carga los usuarios registrados desde la base de datos"""
@@ -79,6 +120,10 @@ def add_registered_user(user_id, username=None, first_name=None, last_name=None)
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
         
+        # Verificar si el usuario ya existe
+        cursor.execute('SELECT user_id FROM registered_users WHERE user_id = ?', (user_id,))
+        existing_user = cursor.fetchone()
+        
         cursor.execute('''
             INSERT OR REPLACE INTO registered_users 
             (user_id, username, first_name, last_name, registered_at)
@@ -87,7 +132,12 @@ def add_registered_user(user_id, username=None, first_name=None, last_name=None)
         
         conn.commit()
         conn.close()
-        logging.info(f"✅ Usuario {user_id} agregado a la base de datos")
+        
+        action = "REGISTRO" if not existing_user else "ACTUALIZACION"
+        details = f"Username: {username}, Nombre: {first_name} {last_name}"
+        log_user_action(user_id, action, details)
+        
+        logging.info(f"✅ Usuario {user_id} {'registrado' if not existing_user else 'actualizado'} en la base de datos")
         return True
     except Exception as e:
         logging.error(f"❌ Error al agregar usuario {user_id}: {e}")
@@ -99,10 +149,20 @@ def remove_registered_user(user_id):
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
         
+        # Obtener información del usuario antes de eliminarlo
+        cursor.execute('SELECT username, first_name, last_name FROM registered_users WHERE user_id = ?', (user_id,))
+        user_info = cursor.fetchone()
+        
         cursor.execute('DELETE FROM registered_users WHERE user_id = ?', (user_id,))
         
         conn.commit()
         conn.close()
+        
+        # Registrar la acción en el log
+        if user_info:
+            details = f"Username: {user_info[0]}, Nombre: {user_info[1]} {user_info[2]}"
+            log_user_action(user_id, "ELIMINACION", details)
+        
         logging.info(f"✅ Usuario {user_id} removido de la base de datos")
         return True
     except Exception as e:
@@ -158,19 +218,19 @@ def clear_webhook():
     """Limpia el webhook para evitar conflictos"""
     max_retries = 3
     for attempt in range(max_retries):
-        try:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
                 logging.info("✅ Webhook limpiado correctamente")
                 return True
-            else:
+        else:
                 logging.warning(f"⚠️ Error al limpiar webhook: {response.status_code}")
         except (ConnectionError, Timeout, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"⚠️ Intento {attempt + 1} fallido al limpiar webhook: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
-        except Exception as e:
+    except Exception as e:
             logging.error(f"❌ Error inesperado al limpiar webhook: {e}")
             break
     return False
@@ -321,8 +381,8 @@ def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
                     else:
                         raise markdown_error
             else:
-                bot.send_message(chat_id, text, parse_mode=parse_mode)
-                return True
+            bot.send_message(chat_id, text, parse_mode=parse_mode)
+            return True
         except (ConnectionError, Timeout, RequestException, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"Intento {attempt + 1} fallido al enviar mensaje: {e}")
             if attempt < max_retries - 1:
@@ -357,8 +417,8 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
                     else:
                         raise markdown_error
             else:
-                bot.reply_to(message, text, parse_mode=parse_mode)
-                return True
+            bot.reply_to(message, text, parse_mode=parse_mode)
+            return True
         except (ConnectionError, Timeout, RequestException, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"Intento {attempt + 1} fallido al responder mensaje: {e}")
             if attempt < max_retries - 1:
@@ -426,6 +486,9 @@ Comandos disponibles:
 • /admins - Menciona solo a los administradores
 • /register - Registrarse para recibir menciones
 • /unregister - Desregistrarse de las menciones
+• /registered - Muestra usuarios registrados
+• /historial - Muestra historial de registros
+• /backup - Crea respaldo de la base de datos
 • /count - Muestra estadísticas del grupo
 • /help - Muestra esta ayuda
 
@@ -434,6 +497,7 @@ Notas importantes:
 • Solo funciona en grupos y supergrupos
 • Para mencionar a todos, el bot necesita permisos especiales
 • Los usuarios registrados recibirán menciones especiales
+• Los datos se guardan permanentemente en la base de datos
     """
     safe_reply_to(message, help_text, parse_mode=None)
 
@@ -452,17 +516,17 @@ def register_user(message):
         
         # Agregar a la base de datos
         if add_registered_user(user_id, username, first_name, last_name):
-            registered_users.add(user_id)
-            
-            # Crear mención personalizada
+        registered_users.add(user_id)
+        
+        # Crear mención personalizada
             mention_text = f"✅ ¡Registro exitoso!\n\n"
-            if username:
-                mention_text += f"Usuario: @{username}\n"
-            else:
+        if username:
+            mention_text += f"Usuario: @{username}\n"
+        else:
                 mention_text += f"Nombre: {first_name or 'Usuario'}\n"
-            mention_text += f"ID: {user_id}\n\n"
-            mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
-            
+        mention_text += f"ID: {user_id}\n\n"
+        mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
+        
             safe_reply_to(message, mention_text, parse_mode=None)
         else:
             safe_reply_to(message, "❌ Ocurrió un error al registrarte en la base de datos. Intenta de nuevo.")
@@ -483,8 +547,8 @@ def unregister_user(message):
         
         # Remover de la base de datos
         if remove_registered_user(user_id):
-            registered_users.remove(user_id)
-            safe_reply_to(message, "✅ Te has desregistrado de las menciones.")
+        registered_users.remove(user_id)
+        safe_reply_to(message, "✅ Te has desregistrado de las menciones.")
         else:
             safe_reply_to(message, "❌ Ocurrió un error al desregistrarte de la base de datos. Intenta de nuevo.")
         
@@ -770,9 +834,9 @@ def count_members(message):
         count_text = f"""
 📊 INFORMACIÓN DEL GRUPO
 
-Total de miembros: {member_count}
-Administradores: {admin_count}
-Miembros normales: {member_count - admin_count}
+ Total de miembros: {member_count}
+ Administradores: {admin_count}
+ Miembros normales: {member_count - admin_count}
 📝 Usuarios registrados: {len(registered_users)}
 
 Nota: Solo puedo mencionar a administradores por limitaciones de la API de Telegram.
@@ -825,13 +889,13 @@ def show_registered_users(message):
             
         except Exception as db_error:
             logging.error(f"Error al consultar base de datos: {db_error}")
-            count_text = f"""
+        count_text = f"""
 📊 USUARIOS REGISTRADOS
 
 Total registrados: {len(registered_users)}
 
 Los usuarios registrados recibirán menciones especiales en los comandos de alerta.
-            """
+        """
         
         safe_reply_to(message, count_text, parse_mode=None)
         
@@ -839,10 +903,81 @@ Los usuarios registrados recibirán menciones especiales en los comandos de aler
         logging.error(f"Error al mostrar usuarios registrados: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
+@bot.message_handler(commands=['historial', 'logs'])
+def show_registration_history(message):
+    """Muestra el historial de registros y acciones"""
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        # Obtener los últimos 20 registros
+        cursor.execute('''
+            SELECT user_id, action, details, timestamp 
+            FROM user_registration_log 
+            ORDER BY timestamp DESC 
+            LIMIT 20
+        ''')
+        
+        logs = cursor.fetchall()
+        conn.close()
+        
+        if not logs:
+            safe_reply_to(message, "📝 No hay historial de registros disponible.")
+            return
+        
+        history_text = "📊 HISTORIAL DE REGISTROS\n\n"
+        
+        for log in logs:
+            user_id, action, details, timestamp = log
+            action_emoji = {
+                "REGISTRO": "✅",
+                "ACTUALIZACION": "🔄", 
+                "ELIMINACION": "❌"
+            }.get(action, "📝")
+            
+            # Formatear timestamp
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                formatted_time = dt.strftime("%d/%m/%Y %H:%M")
+            except:
+                formatted_time = timestamp
+            
+            history_text += f"{action_emoji} **{action}** - Usuario {user_id}\n"
+            history_text += f"   📅 {formatted_time}\n"
+            if details:
+                history_text += f"   📝 {details}\n"
+            history_text += "\n"
+        
+        if len(logs) == 20:
+            history_text += "... (mostrando últimos 20 registros)"
+        
+        safe_reply_to(message, history_text, parse_mode=None)
+        
+    except Exception as e:
+        logging.error(f"Error al mostrar historial: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['backup', 'respaldo'])
+def create_database_backup(message):
+    """Crea un respaldo de la base de datos"""
+    try:
+        if backup_database():
+            safe_reply_to(message, "✅ Respaldo de la base de datos creado exitosamente.")
+        else:
+            safe_reply_to(message, "❌ Error al crear el respaldo de la base de datos.")
+    except Exception as e:
+        logging.error(f"Error al crear respaldo: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
 def start_bot_with_retry():
     """Inicia el bot con reintentos automáticos en caso de error de conexión"""
     max_restart_attempts = 10
     restart_delay = 60  # 1 minuto
+    
+    # Delay inicial para evitar conflictos de instancias
+    logging.info("⏳ Esperando 10 segundos para evitar conflictos de instancias...")
+    time.sleep(10)
     
     for attempt in range(max_restart_attempts):
         try:
@@ -871,6 +1006,27 @@ def start_bot_with_retry():
             else:
                 logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
                 break
+                
+        except Exception as e:
+            error_str = str(e)
+            if "409" in error_str and "Conflict" in error_str:
+                logging.error(f"❌ Conflicto de instancias en intento {attempt + 1}: {e}")
+                if attempt < max_restart_attempts - 1:
+                    # Delay más largo para conflictos de instancias
+                    conflict_delay = restart_delay * 2  # 2 minutos
+                    logging.info(f"🔄 Esperando {conflict_delay} segundos para resolver conflicto...")
+                    time.sleep(conflict_delay)
+                else:
+                    logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
+                    break
+            else:
+                logging.error(f"❌ Error inesperado en intento {attempt + 1}: {e}")
+                if attempt < max_restart_attempts - 1:
+                    logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
+                    time.sleep(restart_delay)
+                else:
+                    logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
+                    break
                 
         except KeyboardInterrupt:
             logging.info("\n🛑 Bot detenido por el usuario")
