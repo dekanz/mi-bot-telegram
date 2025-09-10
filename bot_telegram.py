@@ -174,16 +174,44 @@ def mention_all(message):
         
         # Lista para almacenar las menciones
         mentions = []
+        mentioned_users = set()
         
         # Agregar administradores primero
         for admin in administrators:
-            if not admin.user.is_bot and admin.user.username:
-                mentions.append(f"@{admin.user.username}")
-            elif not admin.user.is_bot:
-                full_name = admin.user.first_name
-                if admin.user.last_name:
-                    full_name += f" {admin.user.last_name}"
-                mentions.append(f"[{full_name}](tg://user?id={admin.user.id})")
+            if not admin.user.is_bot:
+                if admin.user.username:
+                    if f"@{admin.user.username}" not in mentioned_users:
+                        mentions.append(f"@{admin.user.username}")
+                        mentioned_users.add(f"@{admin.user.username}")
+                else:
+                    user_id = admin.user.id
+                    if f"user_{user_id}" not in mentioned_users:
+                        full_name = admin.user.first_name
+                        if admin.user.last_name:
+                            full_name += f" {admin.user.last_name}"
+                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                        mentioned_users.add(f"user_{user_id}")
+        
+        # Agregar usuarios registrados que no sean administradores
+        for user_id in registered_users:
+            try:
+                # Verificar si el usuario está en el grupo
+                member = bot.get_chat_member(chat_id, user_id)
+                if member.status in ['member', 'administrator', 'creator']:
+                    if member.user.username:
+                        if f"@{member.user.username}" not in mentioned_users:
+                            mentions.append(f"@{member.user.username}")
+                            mentioned_users.add(f"@{member.user.username}")
+                    else:
+                        if f"user_{user_id}" not in mentioned_users:
+                            full_name = member.user.first_name
+                            if member.user.last_name:
+                                full_name += f" {member.user.last_name}"
+                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            mentioned_users.add(f"user_{user_id}")
+            except Exception as e:
+                logging.error(f"Error al obtener usuario {user_id}: {e}")
+                continue
         
         if mentions:
             # Dividir menciones en grupos de 5 para evitar límites
@@ -222,16 +250,44 @@ def mention_all_bug(message):
         
         # Lista para almacenar las menciones
         mentions = []
+        mentioned_users = set()
         
         # Agregar administradores primero
         for admin in administrators:
-            if not admin.user.is_bot and admin.user.username:
-                mentions.append(f"@{admin.user.username}")
-            elif not admin.user.is_bot:
-                full_name = admin.user.first_name
-                if admin.user.last_name:
-                    full_name += f" {admin.user.last_name}"
-                mentions.append(f"[{full_name}](tg://user?id={admin.user.id})")
+            if not admin.user.is_bot:
+                if admin.user.username:
+                    if f"@{admin.user.username}" not in mentioned_users:
+                        mentions.append(f"@{admin.user.username}")
+                        mentioned_users.add(f"@{admin.user.username}")
+                else:
+                    user_id = admin.user.id
+                    if f"user_{user_id}" not in mentioned_users:
+                        full_name = admin.user.first_name
+                        if admin.user.last_name:
+                            full_name += f" {admin.user.last_name}"
+                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                        mentioned_users.add(f"user_{user_id}")
+        
+        # Agregar usuarios registrados que no sean administradores
+        for user_id in registered_users:
+            try:
+                # Verificar si el usuario está en el grupo
+                member = bot.get_chat_member(chat_id, user_id)
+                if member.status in ['member', 'administrator', 'creator']:
+                    if member.user.username:
+                        if f"@{member.user.username}" not in mentioned_users:
+                            mentions.append(f"@{member.user.username}")
+                            mentioned_users.add(f"@{member.user.username}")
+                    else:
+                        if f"user_{user_id}" not in mentioned_users:
+                            full_name = member.user.first_name
+                            if member.user.last_name:
+                                full_name += f" {member.user.last_name}"
+                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            mentioned_users.add(f"user_{user_id}")
+            except Exception as e:
+                logging.error(f"Error al obtener usuario {user_id}: {e}")
+                continue
         
         if mentions:
             # Dividir menciones en grupos de 5 para evitar límites
@@ -271,16 +327,44 @@ def mention_all_error(message):
         
         # Lista para almacenar las menciones
         mentions = []
+        mentioned_users = set()
         
         # Agregar administradores primero
         for admin in administrators:
-            if not admin.user.is_bot and admin.user.username:
-                mentions.append(f"@{admin.user.username}")
-            elif not admin.user.is_bot:
-                full_name = admin.user.first_name
-                if admin.user.last_name:
-                    full_name += f" {admin.user.last_name}"
-                mentions.append(f"[{full_name}](tg://user?id={admin.user.id})")
+            if not admin.user.is_bot:
+                if admin.user.username:
+                    if f"@{admin.user.username}" not in mentioned_users:
+                        mentions.append(f"@{admin.user.username}")
+                        mentioned_users.add(f"@{admin.user.username}")
+                else:
+                    user_id = admin.user.id
+                    if f"user_{user_id}" not in mentioned_users:
+                        full_name = admin.user.first_name
+                        if admin.user.last_name:
+                            full_name += f" {admin.user.last_name}"
+                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                        mentioned_users.add(f"user_{user_id}")
+        
+        # Agregar usuarios registrados que no sean administradores
+        for user_id in registered_users:
+            try:
+                # Verificar si el usuario está en el grupo
+                member = bot.get_chat_member(chat_id, user_id)
+                if member.status in ['member', 'administrator', 'creator']:
+                    if member.user.username:
+                        if f"@{member.user.username}" not in mentioned_users:
+                            mentions.append(f"@{member.user.username}")
+                            mentioned_users.add(f"@{member.user.username}")
+                    else:
+                        if f"user_{user_id}" not in mentioned_users:
+                            full_name = member.user.first_name
+                            if member.user.last_name:
+                                full_name += f" {member.user.last_name}"
+                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            mentioned_users.add(f"user_{user_id}")
+            except Exception as e:
+                logging.error(f"Error al obtener usuario {user_id}: {e}")
+                continue
         
         if mentions:
             # Dividir menciones en grupos de 5 para evitar límites
