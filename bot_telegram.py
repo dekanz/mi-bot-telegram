@@ -219,9 +219,9 @@ def clean_name_for_mention(name):
     # Solo remover caracteres de control problemáticos, NO símbolos
     name = ''.join(char for char in name if ord(char) >= 32 or char in '\n\r\t')
     
-    # Solo remover caracteres que causan problemas específicos en enlaces de Markdown
-    # Mantener símbolos como @, #, $, %, &, etc.
-    problematic_chars = ['[', ']', '(', ')', '\\']  # Solo estos causan problemas en enlaces
+    # Remover TODOS los caracteres que pueden causar problemas en enlaces de Markdown
+    # Esto incluye caracteres especiales que pueden romper el parseo
+    problematic_chars = ['[', ']', '(', ')', '\\', '*', '_', '`', '~', '>', '#', '+', '-', '=', '|', '{', '}', '!']
     for char in problematic_chars:
         name = name.replace(char, '')
     
@@ -232,9 +232,9 @@ def clean_name_for_mention(name):
     if not name.strip():
         name = "Usuario"
     
-    # Limitar longitud pero no cortar tanto
-    if len(name) > 25:
-        name = name[:22] + "..."
+    # Limitar longitud
+    if len(name) > 20:
+        name = name[:17] + "..."
     
     return name
 
@@ -255,6 +255,25 @@ def clean_text_for_telegram(text):
         text = text.replace(char, '')
     
     return text
+
+def create_safe_mention_text(mention_text, mentions):
+    """Crea texto de menciones seguro para Markdown"""
+    try:
+        # Crear el texto base
+        result_text = mention_text
+        
+        # Agregar menciones de forma segura
+        if mentions:
+            # Dividir menciones en grupos de 5 para evitar límites
+            for i in range(0, len(mentions), 5):
+                batch = mentions[i:i+5]
+                result_text += " ".join(batch) + "\n"
+        
+        return result_text
+    except Exception as e:
+        logging.error(f"Error al crear texto de menciones: {e}")
+        # Fallback: enviar sin menciones
+        return mention_text + "\n(Error al procesar menciones)"
 
 def validate_markdown_text(text):
     """Valida si un texto es seguro para Markdown"""
@@ -294,6 +313,7 @@ def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
                 except Exception as markdown_error:
                     if "can't parse entities" in str(markdown_error) or "Bad Request" in str(markdown_error):
                         logging.warning(f"Error de Markdown, enviando sin formato: {markdown_error}")
+                        logging.warning(f"Texto problemático: {repr(text)}")
                         # Limpiar el texto y enviar sin formato
                         clean_text = clean_text_for_telegram(text)
                         bot.send_message(chat_id, clean_text, parse_mode=None)
@@ -329,6 +349,7 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
                 except Exception as markdown_error:
                     if "can't parse entities" in str(markdown_error) or "Bad Request" in str(markdown_error):
                         logging.warning(f"Error de Markdown, enviando sin formato: {markdown_error}")
+                        logging.warning(f"Texto problemático: {repr(text)}")
                         # Limpiar el texto y enviar sin formato
                         clean_text = clean_text_for_telegram(text)
                         bot.reply_to(message, clean_text, parse_mode=None)
@@ -535,12 +556,9 @@ def mention_all(message):
                 continue
         
         if mentions:
-            # Dividir menciones en grupos de 5 para evitar límites
-            for i in range(0, len(mentions), 5):
-                batch = mentions[i:i+5]
-                mention_text += " ".join(batch) + "\n"
-            
-            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
+            # Crear texto de menciones seguro
+            final_text = create_safe_mention_text(mention_text, mentions)
+            safe_send_message(chat_id, final_text, parse_mode='Markdown')
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -613,12 +631,9 @@ def mention_all_bug(message):
                 continue
         
         if mentions:
-            # Dividir menciones en grupos de 5 para evitar límites
-            for i in range(0, len(mentions), 5):
-                batch = mentions[i:i+5]
-                mention_text += " ".join(batch) + "\n"
-            
-            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
+            # Crear texto de menciones seguro
+            final_text = create_safe_mention_text(mention_text, mentions)
+            safe_send_message(chat_id, final_text, parse_mode='Markdown')
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -692,12 +707,9 @@ def mention_all_error(message):
                 continue
         
         if mentions:
-            # Dividir menciones en grupos de 5 para evitar límites
-            for i in range(0, len(mentions), 5):
-                batch = mentions[i:i+5]
-                mention_text += " ".join(batch) + "\n"
-            
-            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
+            # Crear texto de menciones seguro
+            final_text = create_safe_mention_text(mention_text, mentions)
+            safe_send_message(chat_id, final_text, parse_mode='Markdown')
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
