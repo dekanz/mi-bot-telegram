@@ -189,18 +189,64 @@ def escape_markdown(text):
 def safe_markdown_text(text):
     """Prepara texto para Markdown de forma segura"""
     if not text:
-        return text
+        return "Usuario"
     
     # Limpiar caracteres problemáticos
     text = str(text)
     
-    # Escapar caracteres especiales
-    text = escape_markdown(text)
-    
-    # Limpiar caracteres de control
+    # Limpiar caracteres de control y caracteres problemáticos
     text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
     
+    # Escapar caracteres especiales de Markdown
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    
+    # Limitar longitud para evitar problemas
+    if len(text) > 50:
+        text = text[:47] + "..."
+    
     return text
+
+def clean_text_for_telegram(text):
+    """Limpia texto para enviar a Telegram sin formato"""
+    if not text:
+        return ""
+    
+    # Convertir a string
+    text = str(text)
+    
+    # Remover caracteres de control problemáticos
+    text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
+    
+    # Remover caracteres especiales de Markdown
+    markdown_chars = ['*', '_', '`', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '!']
+    for char in markdown_chars:
+        text = text.replace(char, '')
+    
+    return text
+
+def validate_markdown_text(text):
+    """Valida si un texto es seguro para Markdown"""
+    if not text:
+        return False
+    
+    # Verificar caracteres problemáticos
+    problematic_patterns = [
+        '**', '__', '``', '[]', '()', '~~', '>>', '##', '++', '--', '==', '||', '{{', '}}'
+    ]
+    
+    for pattern in problematic_patterns:
+        if pattern in text:
+            return False
+    
+    # Verificar que no haya caracteres especiales sin escapar
+    special_chars = ['*', '_', '`', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '!']
+    for char in special_chars:
+        if char in text and f'\\{char}' not in text:
+            return False
+    
+    return True
 
 def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
     """Envía un mensaje con reintentos en caso de error de conexión"""
@@ -208,6 +254,13 @@ def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
         try:
             # Si hay error de parseo de Markdown, intentar sin formato
             if parse_mode == 'Markdown':
+                # Validar si el texto es seguro para Markdown
+                if not validate_markdown_text(text):
+                    logging.warning("Texto no es seguro para Markdown, enviando sin formato")
+                    clean_text = clean_text_for_telegram(text)
+                    bot.send_message(chat_id, clean_text, parse_mode=None)
+                    return True
+                
                 try:
                     bot.send_message(chat_id, text, parse_mode=parse_mode)
                     return True
@@ -215,7 +268,7 @@ def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
                     if "can't parse entities" in str(markdown_error) or "Bad Request" in str(markdown_error):
                         logging.warning(f"Error de Markdown, enviando sin formato: {markdown_error}")
                         # Limpiar el texto y enviar sin formato
-                        clean_text = text.replace('*', '').replace('_', '').replace('`', '').replace('[', '').replace(']', '')
+                        clean_text = clean_text_for_telegram(text)
                         bot.send_message(chat_id, clean_text, parse_mode=None)
                         return True
                     else:
@@ -243,6 +296,13 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
         try:
             # Si hay error de parseo de Markdown, intentar sin formato
             if parse_mode == 'Markdown':
+                # Validar si el texto es seguro para Markdown
+                if not validate_markdown_text(text):
+                    logging.warning("Texto no es seguro para Markdown, enviando sin formato")
+                    clean_text = clean_text_for_telegram(text)
+                    bot.reply_to(message, clean_text, parse_mode=None)
+                    return True
+                
                 try:
                     bot.reply_to(message, text, parse_mode=parse_mode)
                     return True
@@ -250,7 +310,7 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
                     if "can't parse entities" in str(markdown_error) or "Bad Request" in str(markdown_error):
                         logging.warning(f"Error de Markdown, enviando sin formato: {markdown_error}")
                         # Limpiar el texto y enviar sin formato
-                        clean_text = text.replace('*', '').replace('_', '').replace('`', '').replace('[', '').replace(']', '')
+                        clean_text = clean_text_for_telegram(text)
                         bot.reply_to(message, clean_text, parse_mode=None)
                         return True
                     else:
@@ -296,45 +356,45 @@ clear_webhook()
 def start_command(message):
     """Comando de inicio del bot"""
     welcome_text = """
-🤖 **¡Hola! Soy el Bot de Menciones** 
+🤖 ¡Hola! Soy el Bot de Menciones
 
 Estoy aquí para ayudarte a mencionar a todos los integrantes de tu grupo.
 
-**Comandos principales:**
-• `/all` - Menciona a todos
-• `/allbug` - Alerta de bug
-• `/allerror` - Alerta de error de cuota
-• `/register` - Registrarse para menciones
-• `/unregister` - Desregistrarse
-• `/help` - Ver ayuda completa
+Comandos principales:
+• /all - Menciona a todos
+• /allbug - Alerta de bug
+• /allerror - Alerta de error de cuota
+• /register - Registrarse para menciones
+• /unregister - Desregistrarse
+• /help - Ver ayuda completa
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
     """
-    safe_reply_to(message, welcome_text, parse_mode='Markdown')
+    safe_reply_to(message, welcome_text, parse_mode=None)
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
     """Muestra la ayuda del bot"""
     help_text = """
- **Bot de Menciones - Ayuda**
+Bot de Menciones - Ayuda
 
-**Comandos disponibles:**
-• `/all` - Menciona a todos los miembros del grupo
-• `/allbug` - Alerta de bug (menciona a todos)
-• `/allerror` - Alerta de error de cuota (menciona a todos)
-• `/admins` - Menciona solo a los administradores
-• `/register` - Registrarse para recibir menciones
-• `/unregister` - Desregistrarse de las menciones
-• `/count` - Muestra estadísticas del grupo
-• `/help` - Muestra esta ayuda
+Comandos disponibles:
+• /all - Menciona a todos los miembros del grupo
+• /allbug - Alerta de bug (menciona a todos)
+• /allerror - Alerta de error de cuota (menciona a todos)
+• /admins - Menciona solo a los administradores
+• /register - Registrarse para recibir menciones
+• /unregister - Desregistrarse de las menciones
+• /count - Muestra estadísticas del grupo
+• /help - Muestra esta ayuda
 
-**Notas importantes:**
+Notas importantes:
 • El bot debe ser administrador del grupo
 • Solo funciona en grupos y supergrupos
 • Para mencionar a todos, el bot necesita permisos especiales
 • Los usuarios registrados recibirán menciones especiales
     """
-    safe_reply_to(message, help_text, parse_mode='Markdown')
+    safe_reply_to(message, help_text, parse_mode=None)
 
 @bot.message_handler(commands=['register'])
 def register_user(message):
@@ -354,7 +414,7 @@ def register_user(message):
             registered_users.add(user_id)
             
             # Crear mención personalizada
-            mention_text = f"✅ **¡Registro exitoso!**\n\n"
+            mention_text = f"✅ ¡Registro exitoso!\n\n"
             if username:
                 mention_text += f"Usuario: @{username}\n"
             else:
@@ -362,7 +422,7 @@ def register_user(message):
             mention_text += f"ID: {user_id}\n\n"
             mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
             
-            safe_reply_to(message, mention_text, parse_mode='Markdown')
+            safe_reply_to(message, mention_text, parse_mode=None)
         else:
             safe_reply_to(message, "❌ Ocurrió un error al registrarte en la base de datos. Intenta de nuevo.")
         
@@ -404,8 +464,8 @@ def mention_all(message):
         # Obtener información del chat
         chat_member_count = bot.get_chat_member_count(chat_id)
         
-        mention_text = f"🔔 **MENCIÓN GENERAL** 🔔\n\n"
-        mention_text += f" Total de miembros: {chat_member_count}\n"
+        mention_text = f"🔔 MENCIÓN GENERAL 🔔\n\n"
+        mention_text += f"Total de miembros: {chat_member_count}\n"
         mention_text += f"📝 Usuarios registrados: {len(registered_users)}\n\n"
         
         # Obtener administradores
@@ -458,7 +518,7 @@ def mention_all(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
+            safe_send_message(chat_id, mention_text, parse_mode=None)
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -479,10 +539,10 @@ def mention_all_bug(message):
         # Obtener información del chat
         chat_member_count = bot.get_chat_member_count(chat_id)
         
-        mention_text = f"🚨 **ALERTA DE BUG** 🚨\n\n"
-        mention_text += f" Total de miembros: {chat_member_count}\n"
+        mention_text = f"🚨 ALERTA DE BUG 🚨\n\n"
+        mention_text += f"Total de miembros: {chat_member_count}\n"
         mention_text += f"📝 Usuarios registrados: {len(registered_users)}\n\n"
-        mention_text += "⚠️ **Se ha detectado un bug crítico que requiere atención inmediata**\n\n"
+        mention_text += "⚠️ Se ha detectado un bug crítico que requiere atención inmediata\n\n"
         
         # Obtener administradores
         administrators = bot.get_chat_administrators(chat_id)
@@ -534,7 +594,7 @@ def mention_all_bug(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
+            safe_send_message(chat_id, mention_text, parse_mode=None)
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -555,11 +615,11 @@ def mention_all_error(message):
         # Obtener información del chat
         chat_member_count = bot.get_chat_member_count(chat_id)
         
-        mention_text = f"💥 **ALERTA DE ERROR DE CUOTA** 💥\n\n"
-        mention_text += f" Total de miembros: {chat_member_count}\n"
+        mention_text = f"💥 ALERTA DE ERROR DE CUOTA 💥\n\n"
+        mention_text += f"Total de miembros: {chat_member_count}\n"
         mention_text += f"📝 Usuarios registrados: {len(registered_users)}\n\n"
-        mention_text += "⚠️ **Se ha alcanzado el límite de cuota del sistema**\n"
-        mention_text += "🔧 **Se requiere intervención inmediata del equipo técnico**\n\n"
+        mention_text += "⚠️ Se ha alcanzado el límite de cuota del sistema\n"
+        mention_text += "🔧 Se requiere intervención inmediata del equipo técnico\n\n"
         
         # Obtener administradores
         administrators = bot.get_chat_administrators(chat_id)
@@ -611,7 +671,7 @@ def mention_all_error(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
+            safe_send_message(chat_id, mention_text, parse_mode=None)
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -631,7 +691,7 @@ def mention_admins(message):
         
         administrators = bot.get_chat_administrators(chat_id)
         
-        mention_text = "🔔 **MENCIÓN A ADMINISTRADORES** 🔔\n\n"
+        mention_text = "🔔 MENCIÓN A ADMINISTRADORES 🔔\n\n"
         mentions = []
         
         for admin in administrators:
@@ -645,7 +705,7 @@ def mention_admins(message):
         
         if mentions:
             mention_text += " ".join(mentions)
-            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
+            safe_send_message(chat_id, mention_text, parse_mode=None)
         else:
             safe_reply_to(message, "❌ No se encontraron administradores.")
             
@@ -669,17 +729,17 @@ def count_members(message):
         admin_count = len([admin for admin in administrators if not admin.user.is_bot])
         
         count_text = f"""
-📊 **INFORMACIÓN DEL GRUPO**
+📊 INFORMACIÓN DEL GRUPO
 
- Total de miembros: {member_count}
- Administradores: {admin_count}
- Miembros normales: {member_count - admin_count}
+Total de miembros: {member_count}
+Administradores: {admin_count}
+Miembros normales: {member_count - admin_count}
 📝 Usuarios registrados: {len(registered_users)}
 
-**Nota:** Solo puedo mencionar a administradores por limitaciones de la API de Telegram.
+Nota: Solo puedo mencionar a administradores por limitaciones de la API de Telegram.
         """
         
-        safe_reply_to(message, count_text, parse_mode='Markdown')
+        safe_reply_to(message, count_text, parse_mode=None)
         
     except Exception as e:
         logging.error(f"Error al contar miembros: {e}")
@@ -706,16 +766,18 @@ def show_registered_users(message):
             users_info = cursor.fetchall()
             conn.close()
             
-            count_text = f"📊 **USUARIOS REGISTRADOS**\n\n"
+            count_text = f"📊 USUARIOS REGISTRADOS\n\n"
             count_text += f"Total registrados: {len(registered_users)}\n\n"
             
             # Mostrar últimos 10 usuarios registrados
-            count_text += "**Últimos registros:**\n"
+            count_text += "Últimos registros:\n"
             for i, (user_id, username, first_name, last_name, registered_at) in enumerate(users_info[:10]):
                 display_name = username if username else f"{first_name or 'Usuario'}"
                 if last_name:
                     display_name += f" {last_name}"
-                count_text += f"{i+1}. {display_name} (ID: {user_id})\n"
+                # Limpiar el nombre para evitar problemas de Markdown
+                clean_display_name = clean_text_for_telegram(display_name)
+                count_text += f"{i+1}. {clean_display_name} (ID: {user_id})\n"
             
             if len(users_info) > 10:
                 count_text += f"\n... y {len(users_info) - 10} más"
@@ -725,14 +787,14 @@ def show_registered_users(message):
         except Exception as db_error:
             logging.error(f"Error al consultar base de datos: {db_error}")
             count_text = f"""
-📊 **USUARIOS REGISTRADOS**
+📊 USUARIOS REGISTRADOS
 
 Total registrados: {len(registered_users)}
 
 Los usuarios registrados recibirán menciones especiales en los comandos de alerta.
             """
         
-        safe_reply_to(message, count_text, parse_mode='Markdown')
+        safe_reply_to(message, count_text, parse_mode=None)
         
     except Exception as e:
         logging.error(f"Error al mostrar usuarios registrados: {e}")
