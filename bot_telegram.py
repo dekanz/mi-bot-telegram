@@ -208,6 +208,36 @@ def safe_markdown_text(text):
     
     return text
 
+def clean_name_for_mention(name):
+    """Limpia nombres para menciones de forma segura, preservando símbolos"""
+    if not name:
+        return "Usuario"
+    
+    # Convertir a string
+    name = str(name)
+    
+    # Solo remover caracteres de control problemáticos, NO símbolos
+    name = ''.join(char for char in name if ord(char) >= 32 or char in '\n\r\t')
+    
+    # Solo remover caracteres que causan problemas específicos en enlaces de Telegram
+    # Mantener símbolos como @, #, $, %, &, etc.
+    problematic_chars = ['[', ']', '(', ')', '\\']  # Solo estos causan problemas en enlaces
+    for char in problematic_chars:
+        name = name.replace(char, '')
+    
+    # Limpiar espacios extra
+    name = ' '.join(name.split())
+    
+    # Si el nombre queda vacío, usar "Usuario"
+    if not name.strip():
+        name = "Usuario"
+    
+    # Limitar longitud
+    if len(name) > 30:
+        name = name[:27] + "..."
+    
+    return name
+
 def clean_text_for_telegram(text):
     """Limpia texto para enviar a Telegram sin formato"""
     if not text:
@@ -479,16 +509,17 @@ def mention_all(message):
         for admin in administrators:
             if not admin.user.is_bot:
                 if admin.user.username:
-                    if f"@{admin.user.username}" not in mentioned_users:
-                        mentions.append(f"@{admin.user.username}")
-                        mentioned_users.add(f"@{admin.user.username}")
+                    clean_username = clean_name_for_mention(admin.user.username)
+                    if f"@{clean_username}" not in mentioned_users:
+                        mentions.append(f"@{clean_username}")
+                        mentioned_users.add(f"@{clean_username}")
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = safe_markdown_text(admin.user.first_name or "Usuario")
+                        full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
-                            full_name += f" {safe_markdown_text(admin.user.last_name)}"
-                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            full_name += f" {clean_name_for_mention(admin.user.last_name)}"
+                        mentions.append(f"@{full_name}")
                         mentioned_users.add(f"user_{user_id}")
         
         # Agregar usuarios registrados que no sean administradores
@@ -498,15 +529,16 @@ def mention_all(message):
                 member = bot.get_chat_member(chat_id, user_id)
                 if member.status in ['member', 'administrator', 'creator']:
                     if member.user.username:
-                        if f"@{member.user.username}" not in mentioned_users:
-                            mentions.append(f"@{member.user.username}")
-                            mentioned_users.add(f"@{member.user.username}")
+                        clean_username = clean_name_for_mention(member.user.username)
+                        if f"@{clean_username}" not in mentioned_users:
+                            mentions.append(f"@{clean_username}")
+                            mentioned_users.add(f"@{clean_username}")
                     else:
                         if f"user_{user_id}" not in mentioned_users:
                             full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
                                 full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            mentions.append(f"@{full_name}")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
@@ -555,16 +587,17 @@ def mention_all_bug(message):
         for admin in administrators:
             if not admin.user.is_bot:
                 if admin.user.username:
-                    if f"@{admin.user.username}" not in mentioned_users:
-                        mentions.append(f"@{admin.user.username}")
-                        mentioned_users.add(f"@{admin.user.username}")
+                    clean_username = clean_name_for_mention(admin.user.username)
+                    if f"@{clean_username}" not in mentioned_users:
+                        mentions.append(f"@{clean_username}")
+                        mentioned_users.add(f"@{clean_username}")
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = safe_markdown_text(admin.user.first_name or "Usuario")
+                        full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
-                            full_name += f" {safe_markdown_text(admin.user.last_name)}"
-                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            full_name += f" {clean_name_for_mention(admin.user.last_name)}"
+                        mentions.append(f"@{full_name}")
                         mentioned_users.add(f"user_{user_id}")
         
         # Agregar usuarios registrados que no sean administradores
@@ -574,15 +607,16 @@ def mention_all_bug(message):
                 member = bot.get_chat_member(chat_id, user_id)
                 if member.status in ['member', 'administrator', 'creator']:
                     if member.user.username:
-                        if f"@{member.user.username}" not in mentioned_users:
-                            mentions.append(f"@{member.user.username}")
-                            mentioned_users.add(f"@{member.user.username}")
+                        clean_username = clean_name_for_mention(member.user.username)
+                        if f"@{clean_username}" not in mentioned_users:
+                            mentions.append(f"@{clean_username}")
+                            mentioned_users.add(f"@{clean_username}")
                     else:
                         if f"user_{user_id}" not in mentioned_users:
                             full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
                                 full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            mentions.append(f"@{full_name}")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
@@ -632,16 +666,17 @@ def mention_all_error(message):
         for admin in administrators:
             if not admin.user.is_bot:
                 if admin.user.username:
-                    if f"@{admin.user.username}" not in mentioned_users:
-                        mentions.append(f"@{admin.user.username}")
-                        mentioned_users.add(f"@{admin.user.username}")
+                    clean_username = clean_name_for_mention(admin.user.username)
+                    if f"@{clean_username}" not in mentioned_users:
+                        mentions.append(f"@{clean_username}")
+                        mentioned_users.add(f"@{clean_username}")
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = safe_markdown_text(admin.user.first_name or "Usuario")
+                        full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
-                            full_name += f" {safe_markdown_text(admin.user.last_name)}"
-                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            full_name += f" {clean_name_for_mention(admin.user.last_name)}"
+                        mentions.append(f"@{full_name}")
                         mentioned_users.add(f"user_{user_id}")
         
         # Agregar usuarios registrados que no sean administradores
@@ -651,15 +686,16 @@ def mention_all_error(message):
                 member = bot.get_chat_member(chat_id, user_id)
                 if member.status in ['member', 'administrator', 'creator']:
                     if member.user.username:
-                        if f"@{member.user.username}" not in mentioned_users:
-                            mentions.append(f"@{member.user.username}")
-                            mentioned_users.add(f"@{member.user.username}")
+                        clean_username = clean_name_for_mention(member.user.username)
+                        if f"@{clean_username}" not in mentioned_users:
+                            mentions.append(f"@{clean_username}")
+                            mentioned_users.add(f"@{clean_username}")
                     else:
                         if f"user_{user_id}" not in mentioned_users:
                             full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
                                 full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            mentions.append(f"@{full_name}")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
@@ -696,12 +732,13 @@ def mention_admins(message):
         
         for admin in administrators:
             if not admin.user.is_bot and admin.user.username:
-                mentions.append(f"@{admin.user.username}")
+                clean_username = clean_name_for_mention(admin.user.username)
+                mentions.append(f"@{clean_username}")
             elif not admin.user.is_bot:
-                full_name = safe_markdown_text(admin.user.first_name or "Usuario")
+                full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
                 if admin.user.last_name:
-                    full_name += f" {safe_markdown_text(admin.user.last_name)}"
-                mentions.append(f"[{full_name}](tg://user?id={admin.user.id})")
+                    full_name += f" {clean_name_for_mention(admin.user.last_name)}"
+                mentions.append(f"@{full_name}")
         
         if mentions:
             mention_text += " ".join(mentions)
