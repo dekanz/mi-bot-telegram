@@ -218,19 +218,19 @@ def clear_webhook():
     """Limpia el webhook para evitar conflictos"""
     max_retries = 3
     for attempt in range(max_retries):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
+        try:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
                 logging.info("✅ Webhook limpiado correctamente")
                 return True
-        else:
+            else:
                 logging.warning(f"⚠️ Error al limpiar webhook: {response.status_code}")
         except (ConnectionError, Timeout, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"⚠️ Intento {attempt + 1} fallido al limpiar webhook: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
-    except Exception as e:
+        except Exception as e:
             logging.error(f"❌ Error inesperado al limpiar webhook: {e}")
             break
     return False
