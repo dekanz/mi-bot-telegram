@@ -219,7 +219,7 @@ def clean_name_for_mention(name):
     # Solo remover caracteres de control problemáticos, NO símbolos
     name = ''.join(char for char in name if ord(char) >= 32 or char in '\n\r\t')
     
-    # Solo remover caracteres que causan problemas específicos en enlaces de Telegram
+    # Solo remover caracteres que causan problemas específicos en enlaces de Markdown
     # Mantener símbolos como @, #, $, %, &, etc.
     problematic_chars = ['[', ']', '(', ')', '\\']  # Solo estos causan problemas en enlaces
     for char in problematic_chars:
@@ -261,20 +261,24 @@ def validate_markdown_text(text):
     if not text:
         return False
     
-    # Verificar caracteres problemáticos
+    # Verificar patrones problemáticos (pero permitir enlaces válidos)
     problematic_patterns = [
-        '**', '__', '``', '[]', '()', '~~', '>>', '##', '++', '--', '==', '||', '{{', '}}'
+        '**', '__', '``', '~~', '>>', '##', '++', '--', '==', '||', '{{', '}}'
     ]
     
     for pattern in problematic_patterns:
         if pattern in text:
             return False
     
-    # Verificar que no haya caracteres especiales sin escapar
-    special_chars = ['*', '_', '`', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '!']
+    # Verificar caracteres especiales problemáticos (pero permitir enlaces)
+    # Solo rechazar si hay caracteres especiales que no sean parte de enlaces válidos
+    special_chars = ['*', '_', '`', '~', '>', '#', '+', '-', '=', '|', '{', '}', '!']
     for char in special_chars:
         if char in text and f'\\{char}' not in text:
             return False
+    
+    # Permitir enlaces válidos de Telegram: [texto](tg://user?id=123)
+    # No rechazar por tener [ o ] si son parte de un enlace válido
     
     return True
 
@@ -519,7 +523,7 @@ def mention_all(message):
                         full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
                             full_name += f" {clean_name_for_mention(admin.user.last_name)}"
-                        mentions.append(f"@{full_name}")
+                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
         # Agregar usuarios registrados que no sean administradores
@@ -538,7 +542,7 @@ def mention_all(message):
                             full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
                                 full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"@{full_name}")
+                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
@@ -550,7 +554,7 @@ def mention_all(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            safe_send_message(chat_id, mention_text, parse_mode=None)
+            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -597,7 +601,7 @@ def mention_all_bug(message):
                         full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
                             full_name += f" {clean_name_for_mention(admin.user.last_name)}"
-                        mentions.append(f"@{full_name}")
+                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
         # Agregar usuarios registrados que no sean administradores
@@ -616,7 +620,7 @@ def mention_all_bug(message):
                             full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
                                 full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"@{full_name}")
+                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
@@ -628,7 +632,7 @@ def mention_all_bug(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            safe_send_message(chat_id, mention_text, parse_mode=None)
+            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -676,7 +680,7 @@ def mention_all_error(message):
                         full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
                             full_name += f" {clean_name_for_mention(admin.user.last_name)}"
-                        mentions.append(f"@{full_name}")
+                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
         # Agregar usuarios registrados que no sean administradores
@@ -695,7 +699,7 @@ def mention_all_error(message):
                             full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
                                 full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"@{full_name}")
+                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
@@ -707,7 +711,7 @@ def mention_all_error(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            safe_send_message(chat_id, mention_text, parse_mode=None)
+            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -738,11 +742,11 @@ def mention_admins(message):
                 full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
                 if admin.user.last_name:
                     full_name += f" {clean_name_for_mention(admin.user.last_name)}"
-                mentions.append(f"@{full_name}")
+                mentions.append(f"[{full_name}](tg://user?id={admin.user.id})")
         
         if mentions:
             mention_text += " ".join(mentions)
-            safe_send_message(chat_id, mention_text, parse_mode=None)
+            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
             safe_reply_to(message, "❌ No se encontraron administradores.")
             
@@ -883,5 +887,29 @@ def start_bot_with_retry():
                 logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
                 break
 
+def start_web_server():
+    """Inicia un servidor web simple para Render"""
+    from flask import Flask
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def health_check():
+        return "Bot de Telegram funcionando correctamente"
+    
+    @app.route('/health')
+    def health():
+        return {"status": "ok", "bot": "running"}
+    
+    # Obtener puerto de Render o usar 5000 por defecto
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+
 if __name__ == '__main__':
-    start_bot_with_retry()
+    # Iniciar bot en un hilo separado
+    import threading
+    bot_thread = threading.Thread(target=start_bot_with_retry)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Iniciar servidor web
+    start_web_server()
