@@ -381,8 +381,8 @@ def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
                     else:
                         raise markdown_error
             else:
-            bot.send_message(chat_id, text, parse_mode=parse_mode)
-            return True
+                bot.send_message(chat_id, text, parse_mode=parse_mode)
+                return True
         except (ConnectionError, Timeout, RequestException, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"Intento {attempt + 1} fallido al enviar mensaje: {e}")
             if attempt < max_retries - 1:
@@ -417,8 +417,8 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
                     else:
                         raise markdown_error
             else:
-            bot.reply_to(message, text, parse_mode=parse_mode)
-            return True
+                bot.reply_to(message, text, parse_mode=parse_mode)
+                return True
         except (ConnectionError, Timeout, RequestException, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"Intento {attempt + 1} fallido al responder mensaje: {e}")
             if attempt < max_retries - 1:
@@ -516,17 +516,17 @@ def register_user(message):
         
         # Agregar a la base de datos
         if add_registered_user(user_id, username, first_name, last_name):
-        registered_users.add(user_id)
-        
-        # Crear mención personalizada
+            registered_users.add(user_id)
+            
+            # Crear mención personalizada
             mention_text = f"✅ ¡Registro exitoso!\n\n"
-        if username:
-            mention_text += f"Usuario: @{username}\n"
-        else:
+            if username:
+                mention_text += f"Usuario: @{username}\n"
+            else:
                 mention_text += f"Nombre: {first_name or 'Usuario'}\n"
-        mention_text += f"ID: {user_id}\n\n"
-        mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
-        
+            mention_text += f"ID: {user_id}\n\n"
+            mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
+            
             safe_reply_to(message, mention_text, parse_mode=None)
         else:
             safe_reply_to(message, "❌ Ocurrió un error al registrarte en la base de datos. Intenta de nuevo.")
