@@ -5,6 +5,7 @@ import json
 import time
 import requests
 import socket
+import sqlite3
 from telebot import types
 from requests.exceptions import ConnectionError, Timeout, RequestException
 from urllib3.exceptions import NewConnectionError, MaxRetryError
@@ -29,27 +30,110 @@ logging.basicConfig(
     ]
 )
 
-# Archivo para guardar usuarios registrados
-REGISTERED_USERS_FILE = 'registered_users.json'
+# Base de datos para usuarios registrados
+DATABASE_FILE = 'bot_database.db'
+
+def init_database():
+    """Inicializa la base de datos SQLite"""
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        # Crear tabla de usuarios registrados
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS registered_users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        logging.info("✅ Base de datos inicializada correctamente")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error al inicializar base de datos: {e}")
+        return False
 
 def load_registered_users():
-    """Carga los usuarios registrados desde el archivo"""
+    """Carga los usuarios registrados desde la base de datos"""
     try:
-        if os.path.exists(REGISTERED_USERS_FILE):
-            with open(REGISTERED_USERS_FILE, 'r') as f:
-                return set(json.load(f))
-        return set()
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT user_id FROM registered_users')
+        user_ids = [row[0] for row in cursor.fetchall()]
+        
+        conn.close()
+        return set(user_ids)
     except Exception as e:
-        logging.error(f"Error al cargar usuarios registrados: {e}")
+        logging.error(f"❌ Error al cargar usuarios registrados: {e}")
         return set()
 
-def save_registered_users(users):
-    """Guarda los usuarios registrados en el archivo"""
+def add_registered_user(user_id, username=None, first_name=None, last_name=None):
+    """Agrega un usuario a la base de datos"""
     try:
-        with open(REGISTERED_USERS_FILE, 'w') as f:
-            json.dump(list(users), f)
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO registered_users 
+            (user_id, username, first_name, last_name, registered_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (user_id, username, first_name, last_name))
+        
+        conn.commit()
+        conn.close()
+        logging.info(f"✅ Usuario {user_id} agregado a la base de datos")
+        return True
     except Exception as e:
-        logging.error(f"Error al guardar usuarios registrados: {e}")
+        logging.error(f"❌ Error al agregar usuario {user_id}: {e}")
+        return False
+
+def remove_registered_user(user_id):
+    """Remueve un usuario de la base de datos"""
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM registered_users WHERE user_id = ?', (user_id,))
+        
+        conn.commit()
+        conn.close()
+        logging.info(f"✅ Usuario {user_id} removido de la base de datos")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error al remover usuario {user_id}: {e}")
+        return False
+
+def get_user_info(user_id):
+    """Obtiene información de un usuario registrado"""
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT username, first_name, last_name, registered_at 
+            FROM registered_users WHERE user_id = ?
+        ''', (user_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'username': result[0],
+                'first_name': result[1],
+                'last_name': result[2],
+                'registered_at': result[3]
+            }
+        return None
+    except Exception as e:
+        logging.error(f"❌ Error al obtener información del usuario {user_id}: {e}")
+        return None
 
 def check_network_connectivity():
     """Verifica la conectividad de red antes de iniciar el bot"""
@@ -93,17 +177,52 @@ def clear_webhook():
 
 def escape_markdown(text):
     """Escapa caracteres especiales de Markdown"""
+    if not text:
+        return text
+    
+    # Caracteres especiales que necesitan escape en Markdown
     special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
+    return text
+
+def safe_markdown_text(text):
+    """Prepara texto para Markdown de forma segura"""
+    if not text:
+        return text
+    
+    # Limpiar caracteres problemáticos
+    text = str(text)
+    
+    # Escapar caracteres especiales
+    text = escape_markdown(text)
+    
+    # Limpiar caracteres de control
+    text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
+    
     return text
 
 def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
     """Envía un mensaje con reintentos en caso de error de conexión"""
     for attempt in range(max_retries):
         try:
-            bot.send_message(chat_id, text, parse_mode=parse_mode)
-            return True
+            # Si hay error de parseo de Markdown, intentar sin formato
+            if parse_mode == 'Markdown':
+                try:
+                    bot.send_message(chat_id, text, parse_mode=parse_mode)
+                    return True
+                except Exception as markdown_error:
+                    if "can't parse entities" in str(markdown_error) or "Bad Request" in str(markdown_error):
+                        logging.warning(f"Error de Markdown, enviando sin formato: {markdown_error}")
+                        # Limpiar el texto y enviar sin formato
+                        clean_text = text.replace('*', '').replace('_', '').replace('`', '').replace('[', '').replace(']', '')
+                        bot.send_message(chat_id, clean_text, parse_mode=None)
+                        return True
+                    else:
+                        raise markdown_error
+            else:
+                bot.send_message(chat_id, text, parse_mode=parse_mode)
+                return True
         except (ConnectionError, Timeout, RequestException, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"Intento {attempt + 1} fallido al enviar mensaje: {e}")
             if attempt < max_retries - 1:
@@ -122,8 +241,23 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
     """Responde a un mensaje con reintentos en caso de error de conexión"""
     for attempt in range(max_retries):
         try:
-            bot.reply_to(message, text, parse_mode=parse_mode)
-            return True
+            # Si hay error de parseo de Markdown, intentar sin formato
+            if parse_mode == 'Markdown':
+                try:
+                    bot.reply_to(message, text, parse_mode=parse_mode)
+                    return True
+                except Exception as markdown_error:
+                    if "can't parse entities" in str(markdown_error) or "Bad Request" in str(markdown_error):
+                        logging.warning(f"Error de Markdown, enviando sin formato: {markdown_error}")
+                        # Limpiar el texto y enviar sin formato
+                        clean_text = text.replace('*', '').replace('_', '').replace('`', '').replace('[', '').replace(']', '')
+                        bot.reply_to(message, clean_text, parse_mode=None)
+                        return True
+                    else:
+                        raise markdown_error
+            else:
+                bot.reply_to(message, text, parse_mode=parse_mode)
+                return True
         except (ConnectionError, Timeout, RequestException, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"Intento {attempt + 1} fallido al responder mensaje: {e}")
             if attempt < max_retries - 1:
@@ -137,6 +271,11 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
             logging.error(f"Error inesperado al responder mensaje: {e}")
             return False
     return False
+
+# Inicializar base de datos
+if not init_database():
+    logging.error("❌ No se pudo inicializar la base de datos. Saliendo...")
+    exit(1)
 
 # Cargar usuarios registrados al iniciar
 registered_users = load_registered_users()
@@ -204,24 +343,28 @@ def register_user(message):
         user_id = message.from_user.id
         username = message.from_user.username
         first_name = message.from_user.first_name
+        last_name = message.from_user.last_name
         
         if user_id in registered_users:
             safe_reply_to(message, "✅ Ya estás registrado para recibir menciones.")
             return
         
-        registered_users.add(user_id)
-        save_registered_users(registered_users)
-        
-        # Crear mención personalizada
-        mention_text = f"✅ **¡Registro exitoso!**\n\n"
-        if username:
-            mention_text += f"Usuario: @{username}\n"
+        # Agregar a la base de datos
+        if add_registered_user(user_id, username, first_name, last_name):
+            registered_users.add(user_id)
+            
+            # Crear mención personalizada
+            mention_text = f"✅ **¡Registro exitoso!**\n\n"
+            if username:
+                mention_text += f"Usuario: @{username}\n"
+            else:
+                mention_text += f"Nombre: {first_name or 'Usuario'}\n"
+            mention_text += f"ID: {user_id}\n\n"
+            mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
+            
+            safe_reply_to(message, mention_text, parse_mode='Markdown')
         else:
-            mention_text += f"Nombre: {first_name}\n"
-        mention_text += f"ID: {user_id}\n\n"
-        mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
-        
-        safe_reply_to(message, mention_text, parse_mode='Markdown')
+            safe_reply_to(message, "❌ Ocurrió un error al registrarte en la base de datos. Intenta de nuevo.")
         
     except Exception as e:
         logging.error(f"Error al registrar usuario: {e}")
@@ -237,10 +380,12 @@ def unregister_user(message):
             safe_reply_to(message, "❌ No estás registrado.")
             return
         
-        registered_users.remove(user_id)
-        save_registered_users(registered_users)
-        
-        safe_reply_to(message, "✅ Te has desregistrado de las menciones.")
+        # Remover de la base de datos
+        if remove_registered_user(user_id):
+            registered_users.remove(user_id)
+            safe_reply_to(message, "✅ Te has desregistrado de las menciones.")
+        else:
+            safe_reply_to(message, "❌ Ocurrió un error al desregistrarte de la base de datos. Intenta de nuevo.")
         
     except Exception as e:
         logging.error(f"Error al desregistrar usuario: {e}")
@@ -280,9 +425,9 @@ def mention_all(message):
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = escape_markdown(admin.user.first_name)
+                        full_name = safe_markdown_text(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
-                            full_name += f" {escape_markdown(admin.user.last_name)}"
+                            full_name += f" {safe_markdown_text(admin.user.last_name)}"
                         mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
@@ -356,9 +501,9 @@ def mention_all_bug(message):
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = escape_markdown(admin.user.first_name)
+                        full_name = safe_markdown_text(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
-                            full_name += f" {escape_markdown(admin.user.last_name)}"
+                            full_name += f" {safe_markdown_text(admin.user.last_name)}"
                         mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
@@ -433,9 +578,9 @@ def mention_all_error(message):
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = escape_markdown(admin.user.first_name)
+                        full_name = safe_markdown_text(admin.user.first_name or "Usuario")
                         if admin.user.last_name:
-                            full_name += f" {escape_markdown(admin.user.last_name)}"
+                            full_name += f" {safe_markdown_text(admin.user.last_name)}"
                         mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
@@ -493,9 +638,9 @@ def mention_admins(message):
             if not admin.user.is_bot and admin.user.username:
                 mentions.append(f"@{admin.user.username}")
             elif not admin.user.is_bot:
-                full_name = escape_markdown(admin.user.first_name)
+                full_name = safe_markdown_text(admin.user.first_name or "Usuario")
                 if admin.user.last_name:
-                    full_name += f" {escape_markdown(admin.user.last_name)}"
+                    full_name += f" {safe_markdown_text(admin.user.last_name)}"
                 mentions.append(f"[{full_name}](tg://user?id={admin.user.id})")
         
         if mentions:
@@ -548,13 +693,44 @@ def show_registered_users(message):
             safe_reply_to(message, "📝 No hay usuarios registrados.")
             return
         
-        count_text = f"""
- **USUARIOS REGISTRADOS**
+        # Obtener información detallada de la base de datos
+        try:
+            conn = sqlite3.connect(DATABASE_FILE)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT user_id, username, first_name, last_name, registered_at 
+                FROM registered_users ORDER BY registered_at DESC
+            ''')
+            
+            users_info = cursor.fetchall()
+            conn.close()
+            
+            count_text = f"📊 **USUARIOS REGISTRADOS**\n\n"
+            count_text += f"Total registrados: {len(registered_users)}\n\n"
+            
+            # Mostrar últimos 10 usuarios registrados
+            count_text += "**Últimos registros:**\n"
+            for i, (user_id, username, first_name, last_name, registered_at) in enumerate(users_info[:10]):
+                display_name = username if username else f"{first_name or 'Usuario'}"
+                if last_name:
+                    display_name += f" {last_name}"
+                count_text += f"{i+1}. {display_name} (ID: {user_id})\n"
+            
+            if len(users_info) > 10:
+                count_text += f"\n... y {len(users_info) - 10} más"
+            
+            count_text += "\n\nLos usuarios registrados recibirán menciones especiales en los comandos de alerta."
+            
+        except Exception as db_error:
+            logging.error(f"Error al consultar base de datos: {db_error}")
+            count_text = f"""
+📊 **USUARIOS REGISTRADOS**
 
 Total registrados: {len(registered_users)}
 
 Los usuarios registrados recibirán menciones especiales en los comandos de alerta.
-        """
+            """
         
         safe_reply_to(message, count_text, parse_mode='Markdown')
         
