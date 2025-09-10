@@ -5,6 +5,7 @@ import json
 import time
 import requests
 from telebot import types
+from requests.exceptions import ConnectionError, Timeout, RequestException
 
 # Configuración del bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -45,13 +46,56 @@ def clear_webhook():
     """Limpia el webhook para evitar conflictos"""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         if response.status_code == 200:
             print("✅ Webhook limpiado correctamente")
         else:
             print(f"⚠️ Error al limpiar webhook: {response.status_code}")
     except Exception as e:
         print(f"⚠️ Error al limpiar webhook: {e}")
+
+def escape_markdown(text):
+    """Escapa caracteres especiales de Markdown"""
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=3):
+    """Envía un mensaje con reintentos en caso de error de conexión"""
+    for attempt in range(max_retries):
+        try:
+            bot.send_message(chat_id, text, parse_mode=parse_mode)
+            return True
+        except (ConnectionError, Timeout, RequestException) as e:
+            logging.warning(f"Intento {attempt + 1} fallido: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Delay exponencial
+            else:
+                logging.error(f"Error después de {max_retries} intentos: {e}")
+                return False
+        except Exception as e:
+            logging.error(f"Error inesperado: {e}")
+            return False
+    return False
+
+def safe_reply_to(message, text, parse_mode='Markdown', max_retries=3):
+    """Responde a un mensaje con reintentos en caso de error de conexión"""
+    for attempt in range(max_retries):
+        try:
+            bot.reply_to(message, text, parse_mode=parse_mode)
+            return True
+        except (ConnectionError, Timeout, RequestException) as e:
+            logging.warning(f"Intento {attempt + 1} fallido: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Delay exponencial
+            else:
+                logging.error(f"Error después de {max_retries} intentos: {e}")
+                return False
+        except Exception as e:
+            logging.error(f"Error inesperado: {e}")
+            return False
+    return False
 
 # Cargar usuarios registrados al iniciar
 registered_users = load_registered_users()
@@ -77,7 +121,7 @@ Estoy aquí para ayudarte a mencionar a todos los integrantes de tu grupo.
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
     """
-    bot.reply_to(message, welcome_text, parse_mode='Markdown')
+    safe_reply_to(message, welcome_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
@@ -101,7 +145,7 @@ def help_command(message):
 • Para mencionar a todos, el bot necesita permisos especiales
 • Los usuarios registrados recibirán menciones especiales
     """
-    bot.reply_to(message, help_text, parse_mode='Markdown')
+    safe_reply_to(message, help_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['register'])
 def register_user(message):
@@ -112,7 +156,7 @@ def register_user(message):
         first_name = message.from_user.first_name
         
         if user_id in registered_users:
-            bot.reply_to(message, "✅ Ya estás registrado para recibir menciones.")
+            safe_reply_to(message, "✅ Ya estás registrado para recibir menciones.")
             return
         
         registered_users.add(user_id)
@@ -127,11 +171,11 @@ def register_user(message):
         mention_text += f"ID: {user_id}\n\n"
         mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
         
-        bot.reply_to(message, mention_text, parse_mode='Markdown')
+        safe_reply_to(message, mention_text, parse_mode='Markdown')
         
     except Exception as e:
         logging.error(f"Error al registrar usuario: {e}")
-        bot.reply_to(message, "❌ Ocurrió un error al registrarte.")
+        safe_reply_to(message, "❌ Ocurrió un error al registrarte. Intenta de nuevo.")
 
 @bot.message_handler(commands=['unregister'])
 def unregister_user(message):
@@ -140,17 +184,17 @@ def unregister_user(message):
         user_id = message.from_user.id
         
         if user_id not in registered_users:
-            bot.reply_to(message, "❌ No estás registrado.")
+            safe_reply_to(message, "❌ No estás registrado.")
             return
         
         registered_users.remove(user_id)
         save_registered_users(registered_users)
         
-        bot.reply_to(message, "✅ Te has desregistrado de las menciones.")
+        safe_reply_to(message, "✅ Te has desregistrado de las menciones.")
         
     except Exception as e:
         logging.error(f"Error al desregistrar usuario: {e}")
-        bot.reply_to(message, "❌ Ocurrió un error al desregistrarte.")
+        safe_reply_to(message, "❌ Ocurrió un error al desregistrarte. Intenta de nuevo.")
 
 @bot.message_handler(commands=['all'])
 def mention_all(message):
@@ -159,7 +203,7 @@ def mention_all(message):
         chat_id = message.chat.id
         
         if message.chat.type not in ['group', 'supergroup']:
-            bot.reply_to(message, "❌ Este comando solo funciona en grupos.")
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
         
         # Obtener información del chat
@@ -186,9 +230,9 @@ def mention_all(message):
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = admin.user.first_name
+                        full_name = escape_markdown(admin.user.first_name)
                         if admin.user.last_name:
-                            full_name += f" {admin.user.last_name}"
+                            full_name += f" {escape_markdown(admin.user.last_name)}"
                         mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
@@ -204,9 +248,9 @@ def mention_all(message):
                             mentioned_users.add(f"@{member.user.username}")
                     else:
                         if f"user_{user_id}" not in mentioned_users:
-                            full_name = member.user.first_name
+                            full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
-                                full_name += f" {member.user.last_name}"
+                                full_name += f" {escape_markdown(member.user.last_name)}"
                             mentions.append(f"[{full_name}](tg://user?id={user_id})")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
@@ -219,13 +263,13 @@ def mention_all(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            bot.send_message(chat_id, mention_text, parse_mode='Markdown')
+            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
-            bot.reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
+            safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
     except Exception as e:
         logging.error(f"Error al mencionar a todos: {e}")
-        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 @bot.message_handler(commands=['allbug'])
 def mention_all_bug(message):
@@ -234,7 +278,7 @@ def mention_all_bug(message):
         chat_id = message.chat.id
         
         if message.chat.type not in ['group', 'supergroup']:
-            bot.reply_to(message, "❌ Este comando solo funciona en grupos.")
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
         
         # Obtener información del chat
@@ -262,9 +306,9 @@ def mention_all_bug(message):
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = admin.user.first_name
+                        full_name = escape_markdown(admin.user.first_name)
                         if admin.user.last_name:
-                            full_name += f" {admin.user.last_name}"
+                            full_name += f" {escape_markdown(admin.user.last_name)}"
                         mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
@@ -280,9 +324,9 @@ def mention_all_bug(message):
                             mentioned_users.add(f"@{member.user.username}")
                     else:
                         if f"user_{user_id}" not in mentioned_users:
-                            full_name = member.user.first_name
+                            full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
-                                full_name += f" {member.user.last_name}"
+                                full_name += f" {escape_markdown(member.user.last_name)}"
                             mentions.append(f"[{full_name}](tg://user?id={user_id})")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
@@ -295,13 +339,13 @@ def mention_all_bug(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            bot.send_message(chat_id, mention_text, parse_mode='Markdown')
+            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
-            bot.reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
+            safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
     except Exception as e:
         logging.error(f"Error al mencionar para bug: {e}")
-        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 @bot.message_handler(commands=['allerror'])
 def mention_all_error(message):
@@ -310,7 +354,7 @@ def mention_all_error(message):
         chat_id = message.chat.id
         
         if message.chat.type not in ['group', 'supergroup']:
-            bot.reply_to(message, "❌ Este comando solo funciona en grupos.")
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
         
         # Obtener información del chat
@@ -339,9 +383,9 @@ def mention_all_error(message):
                 else:
                     user_id = admin.user.id
                     if f"user_{user_id}" not in mentioned_users:
-                        full_name = admin.user.first_name
+                        full_name = escape_markdown(admin.user.first_name)
                         if admin.user.last_name:
-                            full_name += f" {admin.user.last_name}"
+                            full_name += f" {escape_markdown(admin.user.last_name)}"
                         mentions.append(f"[{full_name}](tg://user?id={user_id})")
                         mentioned_users.add(f"user_{user_id}")
         
@@ -357,9 +401,9 @@ def mention_all_error(message):
                             mentioned_users.add(f"@{member.user.username}")
                     else:
                         if f"user_{user_id}" not in mentioned_users:
-                            full_name = member.user.first_name
+                            full_name = escape_markdown(member.user.first_name)
                             if member.user.last_name:
-                                full_name += f" {member.user.last_name}"
+                                full_name += f" {escape_markdown(member.user.last_name)}"
                             mentions.append(f"[{full_name}](tg://user?id={user_id})")
                             mentioned_users.add(f"user_{user_id}")
             except Exception as e:
@@ -372,13 +416,13 @@ def mention_all_error(message):
                 batch = mentions[i:i+5]
                 mention_text += " ".join(batch) + "\n"
             
-            bot.send_message(chat_id, mention_text, parse_mode='Markdown')
+            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
-            bot.reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
+            safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
     except Exception as e:
         logging.error(f"Error al mencionar para error: {e}")
-        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 @bot.message_handler(commands=['admins'])
 def mention_admins(message):
@@ -387,7 +431,7 @@ def mention_admins(message):
         chat_id = message.chat.id
         
         if message.chat.type not in ['group', 'supergroup']:
-            bot.reply_to(message, "❌ Este comando solo funciona en grupos.")
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
         
         administrators = bot.get_chat_administrators(chat_id)
@@ -399,20 +443,20 @@ def mention_admins(message):
             if not admin.user.is_bot and admin.user.username:
                 mentions.append(f"@{admin.user.username}")
             elif not admin.user.is_bot:
-                full_name = admin.user.first_name
+                full_name = escape_markdown(admin.user.first_name)
                 if admin.user.last_name:
-                    full_name += f" {admin.user.last_name}"
+                    full_name += f" {escape_markdown(admin.user.last_name)}"
                 mentions.append(f"[{full_name}](tg://user?id={admin.user.id})")
         
         if mentions:
             mention_text += " ".join(mentions)
-            bot.send_message(chat_id, mention_text, parse_mode='Markdown')
+            safe_send_message(chat_id, mention_text, parse_mode='Markdown')
         else:
-            bot.reply_to(message, "❌ No se encontraron administradores.")
+            safe_reply_to(message, "❌ No se encontraron administradores.")
             
     except Exception as e:
         logging.error(f"Error al mencionar administradores: {e}")
-        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 @bot.message_handler(commands=['count'])
 def count_members(message):
@@ -421,7 +465,7 @@ def count_members(message):
         chat_id = message.chat.id
         
         if message.chat.type not in ['group', 'supergroup']:
-            bot.reply_to(message, "❌ Este comando solo funciona en grupos.")
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
         
         member_count = bot.get_chat_member_count(chat_id)
@@ -440,18 +484,18 @@ def count_members(message):
 **Nota:** Solo puedo mencionar a administradores por limitaciones de la API de Telegram.
         """
         
-        bot.reply_to(message, count_text, parse_mode='Markdown')
+        safe_reply_to(message, count_text, parse_mode='Markdown')
         
     except Exception as e:
         logging.error(f"Error al contar miembros: {e}")
-        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 @bot.message_handler(commands=['registered'])
 def show_registered_users(message):
     """Muestra los usuarios registrados"""
     try:
         if not registered_users:
-            bot.reply_to(message, "📝 No hay usuarios registrados.")
+            safe_reply_to(message, "📝 No hay usuarios registrados.")
             return
         
         count_text = f"""
@@ -462,11 +506,11 @@ Total registrados: {len(registered_users)}
 Los usuarios registrados recibirán menciones especiales en los comandos de alerta.
         """
         
-        bot.reply_to(message, count_text, parse_mode='Markdown')
+        safe_reply_to(message, count_text, parse_mode='Markdown')
         
     except Exception as e:
         logging.error(f"Error al mostrar usuarios registrados: {e}")
-        bot.reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 if __name__ == '__main__':
     print(" Iniciando Bot de Menciones...")
