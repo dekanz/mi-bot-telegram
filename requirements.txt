@@ -2,6 +2,5 @@ pyTelegramBotAPI==4.14.0
 requests==2.31.0
 urllib3>=1.26.0
 flask==2.3.3
-supabase==2.3.4
+supabase==1.0.4
 psycopg2-binary==2.9.9
-httpx==0.24.1

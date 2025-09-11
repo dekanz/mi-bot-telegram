@@ -46,46 +46,19 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 def init_database():
     """Inicializa la base de datos en Supabase (PostgreSQL en la nube)"""
     try:
-        # Crear tablas si no existen
-        create_tables_sql = """
-        CREATE TABLE IF NOT EXISTS registered_users (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            first_name TEXT,
-            last_name TEXT,
-            registered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        );
+        # Verificar conexión probando las tablas
+        supabase.table('registered_users').select('user_id').limit(1).execute()
+        logging.info("✅ Tabla registered_users verificada")
         
-        CREATE TABLE IF NOT EXISTS user_registration_log (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            action TEXT,
-            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            details TEXT
-        );
-        """
-        
-        # Ejecutar SQL para crear tablas
-        result = supabase.rpc('exec_sql', {'sql': create_tables_sql}).execute()
+        supabase.table('user_registration_log').select('id').limit(1).execute()
+        logging.info("✅ Tabla user_registration_log verificada")
         
         logging.info("✅ Base de datos Supabase inicializada correctamente")
         return True
     except Exception as e:
         logging.error(f"❌ Error al inicializar base de datos Supabase: {e}")
-        # Si falla, intentar crear las tablas de otra manera
-        try:
-            # Crear tabla de usuarios registrados
-            supabase.table('registered_users').select('user_id').limit(1).execute()
-            logging.info("✅ Tabla registered_users verificada")
-            
-            # Crear tabla de logs
-            supabase.table('user_registration_log').select('id').limit(1).execute()
-            logging.info("✅ Tabla user_registration_log verificada")
-            
-            return True
-        except Exception as e2:
-            logging.error(f"❌ Error al verificar tablas: {e2}")
-            return False
+        logging.error("💡 Asegúrate de que las tablas estén creadas en Supabase")
+        return False
 
 def backup_database():
     """Crea un respaldo de la base de datos (Supabase ya tiene respaldo automático)"""
