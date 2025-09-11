@@ -457,6 +457,7 @@ Comandos principales:
 • /all - Menciona a todos
 • /allbug - Alerta de bug
 • /allerror - Alerta de error de cuota
+• /marcus - Mensaje especial de Marcus
 • /register - Registrarse para menciones
 • /unregister - Desregistrarse
 • /help - Ver ayuda completa
@@ -475,6 +476,7 @@ Comandos disponibles:
 • /all - Menciona a todos los miembros del grupo
 • /allbug - Alerta de bug (menciona a todos)
 • /allerror - Alerta de error de cuota (menciona a todos)
+• /marcus - Mensaje especial de Marcus
 • /admins - Menciona solo a los administradores
 • /register - Registrarse para recibir menciones
 • /unregister - Desregistrarse de las menciones
@@ -953,6 +955,17 @@ def create_database_backup(message):
             safe_reply_to(message, "❌ Error al crear el respaldo de la base de datos.")
     except Exception as e:
         logging.error(f"Error al crear respaldo: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['marcus'])
+def marcus_command(message):
+    """Comando especial de Marcus sobre Sinner y Roland Garros"""
+    try:
+        marcus_text = "**Sinner pagando 1.02, tiene servicio para ganar Roland Garros.**"
+        safe_reply_to(message, marcus_text, parse_mode='Markdown')
+        log_user_action(message.from_user.id, "MARCUS", "Usuario consultó comando Marcus")
+    except Exception as e:
+        logging.error(f"Error en comando marcus: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 
