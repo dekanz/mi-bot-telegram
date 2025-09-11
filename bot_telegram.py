@@ -499,6 +499,11 @@ Notas importantes:
 def register_user(message):
     """Registra al usuario para recibir menciones o a otros usuarios"""
     try:
+        # Debug: Log del mensaje
+        logging.info(f"🔍 Debug register: reply_to_message={message.reply_to_message is not None}")
+        if message.reply_to_message:
+            logging.info(f"🔍 Debug: reply_from_user={message.reply_to_message.from_user is not None}")
+        
         # Verificar si hay argumentos (mencionar a otro usuario)
         if message.reply_to_message and message.reply_to_message.from_user:
             # Registrar al usuario mencionado en la respuesta
@@ -507,6 +512,8 @@ def register_user(message):
             username = target_user.username
             first_name = target_user.first_name
             last_name = target_user.last_name
+            
+            logging.info(f"🔍 Debug: Registrando a {first_name} (ID: {user_id}) por reply")
             
             if user_id in registered_users:
                 safe_reply_to(message, f"✅ {first_name} ya está registrado para recibir menciones.")
@@ -553,6 +560,8 @@ def register_user(message):
             username = message.from_user.username
             first_name = message.from_user.first_name
             last_name = message.from_user.last_name
+            
+            logging.info(f"🔍 Debug: Registrando a {first_name} (ID: {user_id}) - sin reply")
             
             if user_id in registered_users:
                 safe_reply_to(message, "✅ Ya estás registrado para recibir menciones.")
