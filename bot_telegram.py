@@ -1135,10 +1135,14 @@ def start_web_server():
         try:
             if request.headers.get('content-type') == 'application/json':
                 json_data = request.get_json()
-                if json_data:
+                if json_data and 'update_id' in json_data:
                     # Procesar la actualización
-                    bot.process_new_updates([telebot.types.Update.de_json(json_data)])
+                    update = telebot.types.Update.de_json(json_data)
+                    bot.process_new_updates([update])
                     return jsonify({"status": "ok"})
+                else:
+                    logging.warning("⚠️ Datos de webhook inválidos o sin update_id")
+                    return jsonify({"status": "error", "message": "Invalid update data"}), 400
             return jsonify({"status": "error", "message": "Invalid content type"}), 400
         except Exception as e:
             logging.error(f"Error en webhook: {e}")
