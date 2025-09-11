@@ -1058,9 +1058,9 @@ def start_bot_with_retry():
             
             # Configurar el bot con timeouts más largos
             bot.infinity_polling(
-                timeout=30, 
-                long_polling_timeout=20,
-                interval=1,
+                timeout=10, 
+                long_polling_timeout=5,
+                interval=2,
                 none_stop=True
             )
             
