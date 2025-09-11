@@ -458,7 +458,7 @@ Comandos principales:
 • /allbug - Alerta de bug
 • /allerror - Alerta de error de cuota
 • /marcus - Mensaje especial de Marcus
-• /register - Registrarse para menciones
+• /register - Registrarse para menciones (o responder a un mensaje para registrar a otro)
 • /unregister - Desregistrarse
 • /help - Ver ayuda completa
 
@@ -478,7 +478,7 @@ Comandos disponibles:
 • /allerror - Alerta de error de cuota (menciona a todos)
 • /marcus - Mensaje especial de Marcus
 • /admins - Menciona solo a los administradores
-• /register - Registrarse para recibir menciones
+• /register - Registrarse para recibir menciones (o responder a un mensaje para registrar a otro usuario)
 • /unregister - Desregistrarse de las menciones
 • /registered - Muestra usuarios registrados
 • /historial - Muestra historial de registros
@@ -497,31 +497,63 @@ Notas importantes:
 
 @bot.message_handler(commands=['register'])
 def register_user(message):
-    """Registra al usuario para recibir menciones"""
+    """Registra al usuario para recibir menciones o a otros usuarios"""
     try:
-        user_id = message.from_user.id
-        username = message.from_user.username
-        first_name = message.from_user.first_name
-        last_name = message.from_user.last_name
-        
-        if user_id in registered_users:
-            safe_reply_to(message, "✅ Ya estás registrado para recibir menciones.")
-            return
-        
-        # Agregar a la base de datos
-        if add_registered_user(user_id, username, first_name, last_name):
-            registered_users.add(user_id)
+        # Verificar si hay argumentos (mencionar a otro usuario)
+        if message.reply_to_message and message.reply_to_message.from_user:
+            # Registrar al usuario mencionado en la respuesta
+            target_user = message.reply_to_message.from_user
+            user_id = target_user.id
+            username = target_user.username
+            first_name = target_user.first_name
+            last_name = target_user.last_name
             
-            # Crear mención personalizada
-            mention_text = f"✅ ¡Registro exitoso!\n\n"
-            if username:
-                mention_text += f"Usuario: @{username}\n"
+            if user_id in registered_users:
+                safe_reply_to(message, f"✅ {first_name} ya está registrado para recibir menciones.")
+                return
+            
+            # Agregar a la base de datos
+            if add_registered_user(user_id, username, first_name, last_name):
+                registered_users.add(user_id)
+                
+                # Crear mención personalizada
+                mention_text = f"✅ ¡{first_name} registrado exitosamente!\n\n"
+                if username:
+                    mention_text += f"Usuario: @{username}\n"
+                else:
+                    mention_text += f"Nombre: {first_name or 'Usuario'}\n"
+                mention_text += f"ID: {user_id}\n\n"
+                mention_text += "Ahora recibirá menciones especiales cuando uses los comandos de alerta."
+                
+                safe_reply_to(message, mention_text, parse_mode=None)
+                log_user_action(message.from_user.id, "REGISTER_OTHER", f"Registró a {first_name} ({user_id})")
             else:
-                mention_text += f"Nombre: {first_name or 'Usuario'}\n"
-            mention_text += f"ID: {user_id}\n\n"
-            mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
+                safe_reply_to(message, "❌ Error al registrar al usuario. Intenta de nuevo más tarde.")
+        else:
+            # Registrar al usuario que envió el comando
+            user_id = message.from_user.id
+            username = message.from_user.username
+            first_name = message.from_user.first_name
+            last_name = message.from_user.last_name
             
-            safe_reply_to(message, mention_text, parse_mode=None)
+            if user_id in registered_users:
+                safe_reply_to(message, "✅ Ya estás registrado para recibir menciones.")
+                return
+            
+            # Agregar a la base de datos
+            if add_registered_user(user_id, username, first_name, last_name):
+                registered_users.add(user_id)
+                
+                # Crear mención personalizada
+                mention_text = f"✅ ¡Registro exitoso!\n\n"
+                if username:
+                    mention_text += f"Usuario: @{username}\n"
+                else:
+                    mention_text += f"Nombre: {first_name or 'Usuario'}\n"
+                mention_text += f"ID: {user_id}\n\n"
+                mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
+                
+                safe_reply_to(message, mention_text, parse_mode=None)
         else:
             safe_reply_to(message, "❌ Ocurrió un error al registrarte en la base de datos. Intenta de nuevo.")
         
