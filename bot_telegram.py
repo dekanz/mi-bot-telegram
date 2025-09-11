@@ -217,23 +217,46 @@ def check_network_connectivity():
 
 def clear_webhook():
     """Limpia el webhook para evitar conflictos"""
-    max_retries = 3
+    max_retries = 5
     for attempt in range(max_retries):
         try:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-            response = requests.get(url, timeout=10)
+            # Primero obtener información del webhook
+            webhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+            webhook_response = requests.get(webhook_url, timeout=10)
+            
+            if webhook_response.status_code == 200:
+                webhook_data = webhook_response.json()
+                if webhook_data.get('result', {}).get('url'):
+                    logging.info(f"🔍 Webhook encontrado: {webhook_data['result']['url']}")
+                else:
+                    logging.info("ℹ️ No hay webhook configurado")
+            
+            # Ahora eliminar el webhook
+            delete_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+            response = requests.get(delete_url, timeout=10)
+            
             if response.status_code == 200:
                 logging.info("✅ Webhook limpiado correctamente")
+                # Esperar un poco para que se propague
+                time.sleep(2)
                 return True
             else:
                 logging.warning(f"⚠️ Error al limpiar webhook: {response.status_code}")
+                if response.status_code == 409:
+                    logging.warning("⚠️ Conflicto detectado, esperando más tiempo...")
+                    time.sleep(5)
+                
         except (ConnectionError, Timeout, NewConnectionError, MaxRetryError) as e:
             logging.warning(f"⚠️ Intento {attempt + 1} fallido al limpiar webhook: {e}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
+                wait_time = min(2 ** attempt, 10)  # Máximo 10 segundos
+                time.sleep(wait_time)
         except Exception as e:
             logging.error(f"❌ Error inesperado al limpiar webhook: {e}")
-            break
+            if attempt < max_retries - 1:
+                time.sleep(3)
+    
+    logging.error("❌ No se pudo limpiar el webhook después de todos los intentos")
     return False
 
 def escape_markdown(text):
@@ -1056,12 +1079,16 @@ def payment_countdown(message):
 
 def start_bot_with_retry():
     """Inicia el bot con reintentos automáticos en caso de error de conexión"""
-    max_restart_attempts = 10
-    restart_delay = 60  # 1 minuto
+    max_restart_attempts = 15
+    restart_delay = 30  # 30 segundos
     
-    # Delay inicial para evitar conflictos de instancias
-    logging.info("⏳ Esperando 10 segundos para evitar conflictos de instancias...")
-    time.sleep(10)
+    # Delay inicial más largo para evitar conflictos de instancias
+    logging.info("⏳ Esperando 15 segundos para evitar conflictos de instancias...")
+    time.sleep(15)
+    
+    # Limpiar webhook antes de iniciar
+    logging.info("🧹 Limpiando webhooks antes de iniciar...")
+    clear_webhook()
     
     for attempt in range(max_restart_attempts):
         try:
@@ -1096,10 +1123,14 @@ def start_bot_with_retry():
             if "409" in error_str and "Conflict" in error_str:
                 logging.error(f"❌ Conflicto de instancias en intento {attempt + 1}: {e}")
                 if attempt < max_restart_attempts - 1:
-                    # Delay más largo para conflictos de instancias
-                    conflict_delay = restart_delay * 2  # 2 minutos
+                    # Delay progresivo para conflictos de instancias
+                    conflict_delay = min(restart_delay * (2 ** min(attempt, 4)), 300)  # Máximo 5 minutos
                     logging.info(f"🔄 Esperando {conflict_delay} segundos para resolver conflicto...")
                     time.sleep(conflict_delay)
+                    
+                    # Limpiar webhook antes de reintentar
+                    logging.info("🧹 Limpiando webhooks antes de reintentar...")
+                    clear_webhook()
                 else:
                     logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
                     break
