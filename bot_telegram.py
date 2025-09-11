@@ -1037,13 +1037,8 @@ def start_bot_with_retry():
     logging.info("⏳ Esperando 20 segundos para evitar conflictos de instancias...")
     time.sleep(20)
     
-    # Intentar usar webhook primero
-    if start_bot_with_webhook():
-        logging.info("✅ Bot iniciado con webhook - Sin conflictos 409")
-        return
-    
-    # Si falla webhook, usar polling con limpieza agresiva
-    logging.info("⚠️ Fallback a polling con limpieza agresiva...")
+    # Usar solo polling (más estable para este bot)
+    logging.info("🚀 Iniciando bot con polling...")
     
     for attempt in range(max_restart_attempts):
         try:
