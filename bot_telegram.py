@@ -5,17 +5,26 @@ import json
 import time
 import requests
 import socket
-import sqlite3
 from datetime import datetime, timedelta
 from telebot import types
 from requests.exceptions import ConnectionError, Timeout, RequestException
 from urllib3.exceptions import NewConnectionError, MaxRetryError
+from supabase import create_client, Client
 
 # Configuración del bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 
 if not BOT_TOKEN:
     print("❌ ERROR: BOT_TOKEN no está configurado")
+    exit(1)
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ ERROR: SUPABASE_URL y SUPABASE_KEY no están configurados")
+    print("💡 Configura estas variables de entorno en Render:")
+    print("   SUPABASE_URL=https://tu-proyecto.supabase.co")
+    print("   SUPABASE_KEY=tu-clave-supabase")
     exit(1)
 
 # Crear instancia del bot
@@ -31,165 +40,150 @@ logging.basicConfig(
     ]
 )
 
-# Base de datos para usuarios registrados
-DATABASE_FILE = '/tmp/bot_database.db'  # Usar /tmp para persistencia en Render
+# Configuración de Supabase (Base de datos en la nube)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def init_database():
-    """Inicializa la base de datos SQLite"""
+    """Inicializa la base de datos en Supabase (PostgreSQL en la nube)"""
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
+        # Crear tablas si no existen
+        create_tables_sql = """
+        CREATE TABLE IF NOT EXISTS registered_users (
+            user_id BIGINT PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            registered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
         
-        # Crear tabla de usuarios registrados
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS registered_users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        CREATE TABLE IF NOT EXISTS user_registration_log (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            action TEXT,
+            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            details TEXT
+        );
+        """
         
-        # Crear tabla de respaldo para logs
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_registration_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                action TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                details TEXT
-            )
-        ''')
+        # Ejecutar SQL para crear tablas
+        result = supabase.rpc('exec_sql', {'sql': create_tables_sql}).execute()
         
-        conn.commit()
-        conn.close()
-        logging.info("✅ Base de datos inicializada correctamente")
+        logging.info("✅ Base de datos Supabase inicializada correctamente")
         return True
     except Exception as e:
-        logging.error(f"❌ Error al inicializar base de datos: {e}")
-        return False
+        logging.error(f"❌ Error al inicializar base de datos Supabase: {e}")
+        # Si falla, intentar crear las tablas de otra manera
+        try:
+            # Crear tabla de usuarios registrados
+            supabase.table('registered_users').select('user_id').limit(1).execute()
+            logging.info("✅ Tabla registered_users verificada")
+            
+            # Crear tabla de logs
+            supabase.table('user_registration_log').select('id').limit(1).execute()
+            logging.info("✅ Tabla user_registration_log verificada")
+            
+            return True
+        except Exception as e2:
+            logging.error(f"❌ Error al verificar tablas: {e2}")
+            return False
 
 def backup_database():
-    """Crea un respaldo de la base de datos"""
+    """Crea un respaldo de la base de datos (Supabase ya tiene respaldo automático)"""
     try:
-        import shutil
-        backup_file = f"{DATABASE_FILE}.backup"
-        shutil.copy2(DATABASE_FILE, backup_file)
-        logging.info(f"✅ Respaldo creado: {backup_file}")
+        # Supabase tiene respaldo automático, solo confirmamos
+        logging.info("✅ Supabase tiene respaldo automático habilitado")
         return True
     except Exception as e:
-        logging.error(f"❌ Error al crear respaldo: {e}")
+        logging.error(f"❌ Error al verificar respaldo: {e}")
         return False
 
 def log_user_action(user_id, action, details=""):
-    """Registra una acción del usuario en el log"""
+    """Registra una acción del usuario en el log usando Supabase"""
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
+        result = supabase.table('user_registration_log').insert({
+            'user_id': user_id,
+            'action': action,
+            'details': details
+        }).execute()
         
-        cursor.execute('''
-            INSERT INTO user_registration_log (user_id, action, details)
-            VALUES (?, ?, ?)
-        ''', (user_id, action, details))
-        
-        conn.commit()
-        conn.close()
         logging.info(f"📝 Log registrado: Usuario {user_id} - {action}")
         
     except Exception as e:
         logging.error(f"❌ Error al registrar log: {e}")
 
 def load_registered_users():
-    """Carga los usuarios registrados desde la base de datos"""
+    """Carga los usuarios registrados desde Supabase"""
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT user_id FROM registered_users')
-        user_ids = [row[0] for row in cursor.fetchall()]
-        
-        conn.close()
+        result = supabase.table('registered_users').select('user_id').execute()
+        user_ids = [row['user_id'] for row in result.data]
         return set(user_ids)
     except Exception as e:
         logging.error(f"❌ Error al cargar usuarios registrados: {e}")
         return set()
 
 def add_registered_user(user_id, username=None, first_name=None, last_name=None):
-    """Agrega un usuario a la base de datos"""
+    """Agrega un usuario a la base de datos usando Supabase"""
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
-        
         # Verificar si el usuario ya existe
-        cursor.execute('SELECT user_id FROM registered_users WHERE user_id = ?', (user_id,))
-        existing_user = cursor.fetchone()
+        existing = supabase.table('registered_users').select('user_id').eq('user_id', user_id).execute()
+        is_new_user = len(existing.data) == 0
         
-        cursor.execute('''
-            INSERT OR REPLACE INTO registered_users 
-            (user_id, username, first_name, last_name, registered_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (user_id, username, first_name, last_name))
+        # Insertar o actualizar usuario
+        user_data = {
+            'user_id': user_id,
+            'username': username,
+            'first_name': first_name,
+            'last_name': last_name
+        }
         
-        conn.commit()
-        conn.close()
+        if is_new_user:
+            result = supabase.table('registered_users').insert(user_data).execute()
+        else:
+            result = supabase.table('registered_users').update(user_data).eq('user_id', user_id).execute()
         
-        action = "REGISTRO" if not existing_user else "ACTUALIZACION"
+        action = "REGISTRO" if is_new_user else "ACTUALIZACION"
         details = f"Username: {username}, Nombre: {first_name} {last_name}"
         log_user_action(user_id, action, details)
         
-        logging.info(f"✅ Usuario {user_id} {'registrado' if not existing_user else 'actualizado'} en la base de datos")
+        logging.info(f"✅ Usuario {user_id} {'registrado' if is_new_user else 'actualizado'} en Supabase")
         return True
     except Exception as e:
         logging.error(f"❌ Error al agregar usuario {user_id}: {e}")
         return False
 
 def remove_registered_user(user_id):
-    """Remueve un usuario de la base de datos"""
+    """Remueve un usuario de la base de datos usando Supabase"""
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
-        
         # Obtener información del usuario antes de eliminarlo
-        cursor.execute('SELECT username, first_name, last_name FROM registered_users WHERE user_id = ?', (user_id,))
-        user_info = cursor.fetchone()
+        user_info = supabase.table('registered_users').select('username, first_name, last_name').eq('user_id', user_id).execute()
         
-        cursor.execute('DELETE FROM registered_users WHERE user_id = ?', (user_id,))
-        
-        conn.commit()
-        conn.close()
+        # Eliminar usuario
+        result = supabase.table('registered_users').delete().eq('user_id', user_id).execute()
         
         # Registrar la acción en el log
-        if user_info:
-            details = f"Username: {user_info[0]}, Nombre: {user_info[1]} {user_info[2]}"
+        if user_info.data:
+            user_data = user_info.data[0]
+            details = f"Username: {user_data.get('username')}, Nombre: {user_data.get('first_name')} {user_data.get('last_name')}"
             log_user_action(user_id, "ELIMINACION", details)
         
-        logging.info(f"✅ Usuario {user_id} removido de la base de datos")
+        logging.info(f"✅ Usuario {user_id} removido de Supabase")
         return True
     except Exception as e:
         logging.error(f"❌ Error al remover usuario {user_id}: {e}")
         return False
 
 def get_user_info(user_id):
-    """Obtiene información de un usuario registrado"""
+    """Obtiene información de un usuario registrado desde Supabase"""
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
+        result = supabase.table('registered_users').select('username, first_name, last_name, registered_at').eq('user_id', user_id).execute()
         
-        cursor.execute('''
-            SELECT username, first_name, last_name, registered_at 
-            FROM registered_users WHERE user_id = ?
-        ''', (user_id,))
-        
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
+        if result.data:
+            user_data = result.data[0]
             return {
-                'username': result[0],
-                'first_name': result[1],
-                'last_name': result[2],
-                'registered_at': result[3]
+                'username': user_data.get('username'),
+                'first_name': user_data.get('first_name'),
+                'last_name': user_data.get('last_name'),
+                'registered_at': user_data.get('registered_at')
             }
         return None
     except Exception as e:
@@ -385,65 +379,6 @@ def validate_markdown_text(text):
     
     return True
 
-def calculate_payment_countdown():
-    """Calcula el tiempo restante hasta el pago de Dante a Ignacio"""
-    try:
-        # Fecha objetivo: viernes 12 de septiembre a las 12:00 PM
-        # Asumimos año 2024 (puedes cambiar si es necesario)
-        target_date = datetime(2024, 9, 12, 12, 0, 0)  # 12 de septiembre 2024, 12:00 PM
-        
-        # Obtener fecha y hora actual
-        now = datetime.now()
-        
-        # Calcular diferencia
-        time_diff = target_date - now
-        
-        if time_diff.total_seconds() <= 0:
-            return {
-                'expired': True,
-                'message': "⏰ ¡El plazo de pago ya expiró! Dante debería haber pagado a Ignacio el viernes 12 de septiembre a las 12:00 PM."
-            }
-        
-        # Extraer días, horas, minutos y segundos
-        days = time_diff.days
-        hours, remainder = divmod(time_diff.seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        # Crear mensaje formateado
-        countdown_text = f"💰 **CONTADOR DE PAGO** 💰\n\n"
-        countdown_text += f"👤 **Dante** le debe pagar a **Ignacio**\n"
-        countdown_text += f"📅 **Fecha límite:** Viernes 12 de septiembre, 12:00 PM\n\n"
-        countdown_text += f"⏰ **Tiempo restante:**\n"
-        countdown_text += f"📆 {days} días\n"
-        countdown_text += f"🕐 {hours:02d} horas\n"
-        countdown_text += f"⏱️ {minutes:02d} minutos\n"
-        countdown_text += f"⏲️ {seconds:02d} segundos\n\n"
-        
-        # Agregar estado del pago
-        if days > 7:
-            countdown_text += "✅ **Estado:** Tiempo suficiente para el pago"
-        elif days > 3:
-            countdown_text += "⚠️ **Estado:** Tiempo moderado, considera hacer el pago pronto"
-        elif days > 1:
-            countdown_text += "🚨 **Estado:** ¡Poco tiempo! El pago debe realizarse pronto"
-        else:
-            countdown_text += "🔥 **Estado:** ¡URGENTE! El pago debe realizarse HOY"
-        
-        return {
-            'expired': False,
-            'message': countdown_text,
-            'days': days,
-            'hours': hours,
-            'minutes': minutes,
-            'seconds': seconds
-        }
-        
-    except Exception as e:
-        logging.error(f"Error al calcular contador de pago: {e}")
-        return {
-            'expired': False,
-            'message': "❌ Error al calcular el tiempo restante. Intenta de nuevo más tarde."
-        }
 
 def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
     """Envía un mensaje con reintentos en caso de error de conexión"""
@@ -551,7 +486,6 @@ Comandos principales:
 • /allerror - Alerta de error de cuota
 • /register - Registrarse para menciones
 • /unregister - Desregistrarse
-• /pago - Contador de pago Dante → Ignacio
 • /help - Ver ayuda completa
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
@@ -575,7 +509,6 @@ Comandos disponibles:
 • /historial - Muestra historial de registros
 • /backup - Crea respaldo de la base de datos
 • /count - Muestra estadísticas del grupo
-• /pago - Contador de tiempo hasta el pago de Dante a Ignacio
 • /help - Muestra esta ayuda
 
 Notas importantes:
@@ -942,25 +875,24 @@ def show_registered_users(message):
             safe_reply_to(message, "📝 No hay usuarios registrados.")
             return
         
-        # Obtener información detallada de la base de datos
+        # Obtener información detallada de Supabase
         try:
-            conn = sqlite3.connect(DATABASE_FILE)
-            cursor = conn.cursor()
+            result = supabase.table('registered_users').select('user_id, username, first_name, last_name, registered_at').order('registered_at', desc=True).execute()
             
-            cursor.execute('''
-                SELECT user_id, username, first_name, last_name, registered_at 
-                FROM registered_users ORDER BY registered_at DESC
-            ''')
-            
-            users_info = cursor.fetchall()
-            conn.close()
+            users_info = result.data
             
             count_text = f"📊 USUARIOS REGISTRADOS\n\n"
             count_text += f"Total registrados: {len(registered_users)}\n\n"
             
             # Mostrar últimos 10 usuarios registrados
             count_text += "Últimos registros:\n"
-            for i, (user_id, username, first_name, last_name, registered_at) in enumerate(users_info[:10]):
+            for i, user_data in enumerate(users_info[:10]):
+                username = user_data.get('username')
+                first_name = user_data.get('first_name')
+                last_name = user_data.get('last_name')
+                user_id = user_data.get('user_id')
+                registered_at = user_data.get('registered_at')
+                
                 display_name = username if username else f"{first_name or 'Usuario'}"
                 if last_name:
                     display_name += f" {last_name}"
@@ -974,8 +906,8 @@ def show_registered_users(message):
             count_text += "\n\nLos usuarios registrados recibirán menciones especiales en los comandos de alerta."
             
         except Exception as db_error:
-            logging.error(f"Error al consultar base de datos: {db_error}")
-        count_text = f"""
+            logging.error(f"Error al consultar Supabase: {db_error}")
+            count_text = f"""
 📊 USUARIOS REGISTRADOS
 
 Total registrados: {len(registered_users)}
@@ -993,19 +925,10 @@ Los usuarios registrados recibirán menciones especiales en los comandos de aler
 def show_registration_history(message):
     """Muestra el historial de registros y acciones"""
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
+        # Obtener los últimos 20 registros desde Supabase
+        result = supabase.table('user_registration_log').select('user_id, action, details, timestamp').order('timestamp', desc=True).limit(20).execute()
         
-        # Obtener los últimos 20 registros
-        cursor.execute('''
-            SELECT user_id, action, details, timestamp 
-            FROM user_registration_log 
-            ORDER BY timestamp DESC 
-            LIMIT 20
-        ''')
-        
-        logs = cursor.fetchall()
-        conn.close()
+        logs = result.data
         
         if not logs:
             safe_reply_to(message, "📝 No hay historial de registros disponible.")
@@ -1014,7 +937,10 @@ def show_registration_history(message):
         history_text = "📊 HISTORIAL DE REGISTROS\n\n"
         
         for log in logs:
-            user_id, action, details, timestamp = log
+            user_id = log.get('user_id')
+            action = log.get('action')
+            details = log.get('details')
+            timestamp = log.get('timestamp')
             action_emoji = {
                 "REGISTRO": "✅",
                 "ACTUALIZACION": "🔄", 
@@ -1056,26 +982,7 @@ def create_database_backup(message):
         logging.error(f"Error al crear respaldo: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
-@bot.message_handler(commands=['pago'])
-def payment_countdown(message):
-    """Muestra el contador de tiempo hasta el pago de Dante a Ignacio"""
-    try:
-        # Calcular el tiempo restante
-        countdown_data = calculate_payment_countdown()
-        
-        # Enviar el mensaje con el contador
-        safe_reply_to(message, countdown_data['message'], parse_mode='Markdown')
-        
-        # Log de la acción
-        log_user_action(
-            message.from_user.id, 
-            "CONSULTA_PAGO", 
-            f"Usuario consultó contador de pago - Tiempo restante: {countdown_data.get('days', 0)} días"
-        )
-        
-    except Exception as e:
-        logging.error(f"Error al mostrar contador de pago: {e}")
-        safe_reply_to(message, "❌ Ocurrió un error al calcular el tiempo restante. Intenta de nuevo.")
+
 
 def force_cleanup_all_instances():
     """Fuerza la limpieza de todas las instancias del bot"""
