@@ -6,6 +6,7 @@ import time
 import requests
 import socket
 import sqlite3
+from datetime import datetime, timedelta
 from telebot import types
 from requests.exceptions import ConnectionError, Timeout, RequestException
 from urllib3.exceptions import NewConnectionError, MaxRetryError
@@ -361,6 +362,66 @@ def validate_markdown_text(text):
     
     return True
 
+def calculate_payment_countdown():
+    """Calcula el tiempo restante hasta el pago de Dante a Ignacio"""
+    try:
+        # Fecha objetivo: viernes 12 de septiembre a las 12:00 PM
+        # Asumimos año 2024 (puedes cambiar si es necesario)
+        target_date = datetime(2024, 9, 12, 12, 0, 0)  # 12 de septiembre 2024, 12:00 PM
+        
+        # Obtener fecha y hora actual
+        now = datetime.now()
+        
+        # Calcular diferencia
+        time_diff = target_date - now
+        
+        if time_diff.total_seconds() <= 0:
+            return {
+                'expired': True,
+                'message': "⏰ ¡El plazo de pago ya expiró! Dante debería haber pagado a Ignacio el viernes 12 de septiembre a las 12:00 PM."
+            }
+        
+        # Extraer días, horas, minutos y segundos
+        days = time_diff.days
+        hours, remainder = divmod(time_diff.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        # Crear mensaje formateado
+        countdown_text = f"💰 **CONTADOR DE PAGO** 💰\n\n"
+        countdown_text += f"👤 **Dante** le debe pagar a **Ignacio**\n"
+        countdown_text += f"📅 **Fecha límite:** Viernes 12 de septiembre, 12:00 PM\n\n"
+        countdown_text += f"⏰ **Tiempo restante:**\n"
+        countdown_text += f"📆 {days} días\n"
+        countdown_text += f"🕐 {hours:02d} horas\n"
+        countdown_text += f"⏱️ {minutes:02d} minutos\n"
+        countdown_text += f"⏲️ {seconds:02d} segundos\n\n"
+        
+        # Agregar estado del pago
+        if days > 7:
+            countdown_text += "✅ **Estado:** Tiempo suficiente para el pago"
+        elif days > 3:
+            countdown_text += "⚠️ **Estado:** Tiempo moderado, considera hacer el pago pronto"
+        elif days > 1:
+            countdown_text += "🚨 **Estado:** ¡Poco tiempo! El pago debe realizarse pronto"
+        else:
+            countdown_text += "🔥 **Estado:** ¡URGENTE! El pago debe realizarse HOY"
+        
+        return {
+            'expired': False,
+            'message': countdown_text,
+            'days': days,
+            'hours': hours,
+            'minutes': minutes,
+            'seconds': seconds
+        }
+        
+    except Exception as e:
+        logging.error(f"Error al calcular contador de pago: {e}")
+        return {
+            'expired': False,
+            'message': "❌ Error al calcular el tiempo restante. Intenta de nuevo más tarde."
+        }
+
 def safe_send_message(chat_id, text, parse_mode='Markdown', max_retries=5):
     """Envía un mensaje con reintentos en caso de error de conexión"""
     for attempt in range(max_retries):
@@ -467,6 +528,7 @@ Comandos principales:
 • /allerror - Alerta de error de cuota
 • /register - Registrarse para menciones
 • /unregister - Desregistrarse
+• /pago - Contador de pago Dante → Ignacio
 • /help - Ver ayuda completa
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
@@ -490,6 +552,7 @@ Comandos disponibles:
 • /historial - Muestra historial de registros
 • /backup - Crea respaldo de la base de datos
 • /count - Muestra estadísticas del grupo
+• /pago - Contador de tiempo hasta el pago de Dante a Ignacio
 • /help - Muestra esta ayuda
 
 Notas importantes:
@@ -969,6 +1032,27 @@ def create_database_backup(message):
     except Exception as e:
         logging.error(f"Error al crear respaldo: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['pago'])
+def payment_countdown(message):
+    """Muestra el contador de tiempo hasta el pago de Dante a Ignacio"""
+    try:
+        # Calcular el tiempo restante
+        countdown_data = calculate_payment_countdown()
+        
+        # Enviar el mensaje con el contador
+        safe_reply_to(message, countdown_data['message'], parse_mode='Markdown')
+        
+        # Log de la acción
+        log_user_action(
+            message.from_user.id, 
+            "CONSULTA_PAGO", 
+            f"Usuario consultó contador de pago - Tiempo restante: {countdown_data.get('days', 0)} días"
+        )
+        
+    except Exception as e:
+        logging.error(f"Error al mostrar contador de pago: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al calcular el tiempo restante. Intenta de nuevo.")
 
 def start_bot_with_retry():
     """Inicia el bot con reintentos automáticos en caso de error de conexión"""
