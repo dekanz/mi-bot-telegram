@@ -554,8 +554,8 @@ def register_user(message):
                 mention_text += "Ahora recibirás menciones especiales cuando uses los comandos de alerta."
                 
                 safe_reply_to(message, mention_text, parse_mode=None)
-        else:
-            safe_reply_to(message, "❌ Ocurrió un error al registrarte en la base de datos. Intenta de nuevo.")
+            else:
+                safe_reply_to(message, "❌ Ocurrió un error al registrarte en la base de datos. Intenta de nuevo.")
         
     except Exception as e:
         logging.error(f"Error al registrar usuario: {e}")
