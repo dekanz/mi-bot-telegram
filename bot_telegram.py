@@ -504,7 +504,7 @@ def register_user(message):
         if message.reply_to_message:
             logging.info(f"🔍 Debug: reply_from_user={message.reply_to_message.from_user is not None}")
         
-        # Verificar si hay argumentos (mencionar a otro usuario)
+        # Verificar si hay reply (mencionar a otro usuario)
         if message.reply_to_message and message.reply_to_message.from_user:
             # Registrar al usuario mencionado en la respuesta
             target_user = message.reply_to_message.from_user
@@ -515,6 +515,7 @@ def register_user(message):
             
             logging.info(f"🔍 Debug: Registrando a {first_name} (ID: {user_id}) por reply")
             
+            # Verificar si ya está registrado
             if user_id in registered_users:
                 safe_reply_to(message, f"✅ {first_name} ya está registrado para recibir menciones.")
                 return
