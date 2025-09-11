@@ -529,6 +529,24 @@ def register_user(message):
                 log_user_action(message.from_user.id, "REGISTER_OTHER", f"Registró a {first_name} ({user_id})")
             else:
                 safe_reply_to(message, "❌ Error al registrar al usuario. Intenta de nuevo más tarde.")
+        elif message.text and len(message.text.split()) > 1:
+            # Verificar si hay una mención en el texto
+            text_parts = message.text.split()
+            if len(text_parts) > 1 and text_parts[1].startswith('@'):
+                # Extraer el username de la mención
+                target_username = text_parts[1][1:]  # Quitar el @
+                
+                # Buscar el usuario en el chat
+                if message.chat.type in ['group', 'supergroup']:
+                    # En grupos, necesitamos obtener la información del usuario
+                    safe_reply_to(message, f"❌ No puedo registrar a @{target_username} directamente. Usa 'Responder a un mensaje' + /register en su lugar.")
+                    return
+                else:
+                    safe_reply_to(message, "❌ Este comando solo funciona en grupos. Usa 'Responder a un mensaje' + /register en su lugar.")
+                    return
+            else:
+                safe_reply_to(message, "❌ Formato incorrecto. Usa: /register @usuario o responde a un mensaje + /register")
+                return
         else:
             # Registrar al usuario que envió el comando
             user_id = message.from_user.id
