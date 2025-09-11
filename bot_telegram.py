@@ -1077,21 +1077,101 @@ def payment_countdown(message):
         logging.error(f"Error al mostrar contador de pago: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al calcular el tiempo restante. Intenta de nuevo.")
 
+def force_cleanup_all_instances():
+    """Fuerza la limpieza de todas las instancias del bot"""
+    try:
+        # Obtener información del webhook
+        webhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+        response = requests.get(webhook_url, timeout=10)
+        
+        if response.status_code == 200:
+            webhook_data = response.json()
+            if webhook_data.get('result', {}).get('url'):
+                logging.info(f"🔍 Webhook activo encontrado: {webhook_data['result']['url']}")
+                
+                # Eliminar webhook
+                delete_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+                delete_response = requests.get(delete_url, timeout=10)
+                
+                if delete_response.status_code == 200:
+                    logging.info("✅ Webhook eliminado correctamente")
+                    time.sleep(3)  # Esperar a que se propague
+                else:
+                    logging.warning(f"⚠️ Error al eliminar webhook: {delete_response.status_code}")
+            else:
+                logging.info("ℹ️ No hay webhook configurado")
+        
+        # Intentar detener polling forzadamente
+        try:
+            bot.stop_polling()
+            logging.info("✅ Polling detenido")
+        except:
+            pass
+            
+        time.sleep(5)  # Esperar más tiempo
+        return True
+        
+    except Exception as e:
+        logging.error(f"❌ Error en limpieza forzada: {e}")
+        return False
+
+def start_bot_with_webhook():
+    """Inicia el bot usando webhook en lugar de polling para evitar conflictos 409"""
+    try:
+        # Limpieza forzada de todas las instancias
+        logging.info("🧹 Limpieza forzada de todas las instancias...")
+        force_cleanup_all_instances()
+        
+        # Obtener URL del webhook desde variable de entorno
+        webhook_url = os.getenv('WEBHOOK_URL', f"https://mi-bot-telegram-0bno.onrender.com/webhook")
+        
+        logging.info(f"🚀 Configurando webhook: {webhook_url}")
+        
+        # Configurar webhook
+        webhook_setup_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        webhook_data = {
+            'url': webhook_url,
+            'max_connections': 1,
+            'allowed_updates': ['message']
+        }
+        
+        response = requests.post(webhook_url, json=webhook_data, timeout=10)
+        
+        if response.status_code == 200:
+            logging.info("✅ Webhook configurado correctamente")
+            return True
+        else:
+            logging.error(f"❌ Error al configurar webhook: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"❌ Error al configurar webhook: {e}")
+        return False
+
 def start_bot_with_retry():
     """Inicia el bot con reintentos automáticos en caso de error de conexión"""
     max_restart_attempts = 15
     restart_delay = 30  # 30 segundos
     
     # Delay inicial más largo para evitar conflictos de instancias
-    logging.info("⏳ Esperando 15 segundos para evitar conflictos de instancias...")
-    time.sleep(15)
+    logging.info("⏳ Esperando 20 segundos para evitar conflictos de instancias...")
+    time.sleep(20)
     
-    # Limpiar webhook antes de iniciar
-    logging.info("🧹 Limpiando webhooks antes de iniciar...")
-    clear_webhook()
+    # Intentar usar webhook primero
+    if start_bot_with_webhook():
+        logging.info("✅ Bot iniciado con webhook - Sin conflictos 409")
+        return
+    
+    # Si falla webhook, usar polling con limpieza agresiva
+    logging.info("⚠️ Fallback a polling con limpieza agresiva...")
     
     for attempt in range(max_restart_attempts):
         try:
+            # Limpieza forzada antes de cada intento
+            if attempt > 0:
+                logging.info("🧹 Limpieza forzada antes del intento...")
+                force_cleanup_all_instances()
+            
             logging.info(f"🚀 Iniciando Bot de Menciones (intento {attempt + 1}/{max_restart_attempts})...")
             logging.info(f"Token configurado: {'✅' if BOT_TOKEN else '❌'}")
             logging.info(f"Usuarios registrados: {len(registered_users)}")
@@ -1128,9 +1208,9 @@ def start_bot_with_retry():
                     logging.info(f"🔄 Esperando {conflict_delay} segundos para resolver conflicto...")
                     time.sleep(conflict_delay)
                     
-                    # Limpiar webhook antes de reintentar
-                    logging.info("🧹 Limpiando webhooks antes de reintentar...")
-                    clear_webhook()
+                    # Limpieza forzada antes de reintentar
+                    logging.info("🧹 Limpieza forzada antes de reintentar...")
+                    force_cleanup_all_instances()
                 else:
                     logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
                     break
@@ -1158,7 +1238,7 @@ def start_bot_with_retry():
 
 def start_web_server():
     """Inicia un servidor web simple para Render"""
-    from flask import Flask
+    from flask import Flask, request, jsonify
     app = Flask(__name__)
     
     @app.route('/')
@@ -1168,6 +1248,21 @@ def start_web_server():
     @app.route('/health')
     def health():
         return {"status": "ok", "bot": "running"}
+    
+    @app.route('/webhook', methods=['POST'])
+    def webhook():
+        """Endpoint para recibir actualizaciones de Telegram"""
+        try:
+            if request.headers.get('content-type') == 'application/json':
+                json_data = request.get_json()
+                if json_data:
+                    # Procesar la actualización
+                    bot.process_new_updates([telebot.types.Update.de_json(json_data)])
+                    return jsonify({"status": "ok"})
+            return jsonify({"status": "error", "message": "Invalid content type"}), 400
+        except Exception as e:
+            logging.error(f"Error en webhook: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
     
     # Obtener puerto de Render o usar 5000 por defecto
     port = int(os.getenv('PORT', 5000))
