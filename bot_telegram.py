@@ -1001,7 +1001,7 @@ def force_cleanup_all_instances():
         except:
             pass
             
-        time.sleep(5)  # Esperar más tiempo
+        time.sleep(15)  # Esperar más tiempo para que se propague
         return True
         
     except Exception as e:
@@ -1043,22 +1043,27 @@ def start_bot_with_webhook():
 
 def start_bot_with_retry():
     """Inicia el bot con reintentos automáticos en caso de error de conexión"""
-    max_restart_attempts = 15
-    restart_delay = 30  # 30 segundos
+    max_restart_attempts = 3  # Reducir intentos
+    restart_delay = 60  # 60 segundos entre intentos
     
-    # Delay inicial más largo para evitar conflictos de instancias
-    logging.info("⏳ Esperando 20 segundos para evitar conflictos de instancias...")
-    time.sleep(20)
+    # Delay inicial MUY largo para evitar conflictos
+    logging.info("⏳ Esperando 60 segundos para evitar conflictos de instancias...")
+    time.sleep(60)
     
-    # Usar solo polling (más estable para este bot)
+    # Limpieza agresiva antes de empezar
+    logging.info("🧹 Limpieza agresiva de todas las instancias...")
+    force_cleanup_all_instances()
+    time.sleep(30)  # Esperar más después de limpiar
+    
     logging.info("🚀 Iniciando bot con polling...")
     
     for attempt in range(max_restart_attempts):
         try:
             # Limpieza forzada antes de cada intento
             if attempt > 0:
-                logging.info("🧹 Limpieza forzada antes del intento...")
+                logging.info(f"🧹 Limpieza forzada antes del intento {attempt + 1}...")
                 force_cleanup_all_instances()
+                time.sleep(30)  # Esperar después de limpiar
             
             logging.info(f"🚀 Iniciando Bot de Menciones (intento {attempt + 1}/{max_restart_attempts})...")
             logging.info(f"Token configurado: {'✅' if BOT_TOKEN else '❌'}")
@@ -1066,9 +1071,9 @@ def start_bot_with_retry():
             
             # Configurar el bot con timeouts más largos
             bot.infinity_polling(
-                timeout=10, 
-                long_polling_timeout=5,
-                interval=2,
+                timeout=30, 
+                long_polling_timeout=20,
+                interval=3,
                 none_stop=True
             )
             
