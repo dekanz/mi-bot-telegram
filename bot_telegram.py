@@ -244,12 +244,24 @@ def send_direct_messages_to_users(alert_text, command_name):
                 sent_count += 1
                 logging.info(f"✅ Mensaje directo enviado a usuario {user_id}")
             except Exception as e:
+                error_str = str(e).lower()
                 logging.error(f"❌ Error al enviar mensaje directo a usuario {user_id}: {e}")
-                # Si el usuario bloqueó al bot o no se puede contactar, removerlo
-                if "chat not found" in str(e).lower() or "blocked" in str(e).lower():
+                
+                # Manejar diferentes tipos de errores
+                if ("chat not found" in error_str or 
+                    "blocked" in error_str or 
+                    "user is deactivated" in error_str):
+                    # Usuario no contactable, removerlo
                     logging.info(f"🗑️ Removiendo usuario {user_id} de mensajes directos (no contactable)")
                     remove_direct_message_user(user_id)
                     direct_message_users.discard(user_id)
+                elif "bot can't initiate conversation" in error_str:
+                    # Usuario no ha iniciado conversación con el bot
+                    logging.warning(f"⚠️ Usuario {user_id} no ha iniciado conversación con el bot")
+                    # No removerlo, solo avisar
+                else:
+                    # Otro tipo de error, no remover
+                    logging.warning(f"⚠️ Error desconocido para usuario {user_id}: {e}")
         
         logging.info(f"📤 Mensajes directos enviados: {sent_count}/{len(direct_message_users)}")
         
@@ -556,6 +568,7 @@ Comandos principales:
 • /marcus - Mensaje especial de Marcus
 • /mensaje - Registrarse para mensajes directos de alertas
 • /nomensaje - Desregistrarse de mensajes directos
+• /testdirecto - Probar si el bot puede enviar mensajes directos
 • /register - Registrarse para menciones (o responder a un mensaje para registrar a otro)
 • /unregister - Desregistrarse
 • /help - Ver ayuda completa
@@ -577,6 +590,7 @@ Comandos disponibles:
 • /marcus - Mensaje especial de Marcus
 • /mensaje - Registrarse para mensajes directos de alertas
 • /nomensaje - Desregistrarse de mensajes directos
+• /testdirecto - Probar si el bot puede enviar mensajes directos
 • /listamensajes - Muestra usuarios registrados para mensajes directos
 • /admins - Menciona solo a los administradores
 • /register - Registrarse para recibir menciones (o responder a un mensaje para registrar a otro usuario)
@@ -1151,7 +1165,10 @@ def mensaje_command(message):
             else:
                 mensaje_text += f"Nombre: {first_name or 'Usuario'}\n"
             mensaje_text += f"ID: {user_id}\n\n"
-            mensaje_text += "Ahora recibirás mensajes directos cada vez que haya una alerta en el grupo.\n"
+            mensaje_text += "Ahora recibirás mensajes directos cada vez que haya una alerta en el grupo.\n\n"
+            mensaje_text += "⚠️ IMPORTANTE: Para recibir mensajes directos, debes:\n"
+            mensaje_text += "1. Enviar un mensaje privado al bot (cualquier cosa)\n"
+            mensaje_text += "2. Esto permite que el bot te contacte directamente\n\n"
             mensaje_text += "Usa /nomensaje para desregistrarte."
             
             safe_reply_to(message, mensaje_text, parse_mode=None)
@@ -1232,6 +1249,36 @@ Estos usuarios recibirán mensajes directos cada vez que haya una alerta en el g
         
     except Exception as e:
         logging.error(f"Error al mostrar usuarios de mensajes directos: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['testdirecto'])
+def test_directo_command(message):
+    """Comando para probar si el bot puede enviar mensajes directos al usuario"""
+    try:
+        user_id = message.from_user.id
+        username = message.from_user.username
+        first_name = message.from_user.first_name
+        
+        test_message = "🧪 PRUEBA DE MENSAJE DIRECTO 🧪\n\n"
+        test_message += "Si recibes este mensaje, el bot puede contactarte directamente.\n"
+        test_message += "¡Perfecto! Recibirás notificaciones de alertas del grupo."
+        
+        try:
+            bot.send_message(user_id, test_message)
+            safe_reply_to(message, "✅ Mensaje directo enviado exitosamente. ¡Puedes recibir notificaciones!")
+            logging.info(f"✅ Prueba de mensaje directo exitosa para usuario {user_id}")
+        except Exception as e:
+            error_str = str(e).lower()
+            if "bot can't initiate conversation" in error_str:
+                safe_reply_to(message, "❌ El bot no puede enviarte mensajes directos.\n\nPara solucionarlo:\n1. Ve al bot en privado\n2. Envía cualquier mensaje (ej: /start)\n3. Prueba de nuevo con /testdirecto")
+            else:
+                safe_reply_to(message, f"❌ Error al enviar mensaje directo: {e}")
+            logging.error(f"❌ Error en prueba de mensaje directo para usuario {user_id}: {e}")
+        
+        log_user_action(user_id, "TEST_DIRECTO", "Usuario probó mensaje directo")
+        
+    except Exception as e:
+        logging.error(f"Error en comando testdirecto: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 @bot.message_handler(commands=['marcus'])
