@@ -163,6 +163,99 @@ def get_user_info(user_id):
         logging.error(f"❌ Error al obtener información del usuario {user_id}: {e}")
         return None
 
+def load_direct_message_users():
+    """Carga los usuarios registrados para mensajes directos desde Supabase"""
+    try:
+        result = supabase.table('direct_message_users').select('user_id').execute()
+        user_ids = [row['user_id'] for row in result.data]
+        return set(user_ids)
+    except Exception as e:
+        logging.error(f"❌ Error al cargar usuarios de mensajes directos: {e}")
+        return set()
+
+def add_direct_message_user(user_id, username=None, first_name=None, last_name=None):
+    """Agrega un usuario para recibir mensajes directos usando Supabase"""
+    try:
+        # Verificar si el usuario ya existe
+        existing = supabase.table('direct_message_users').select('user_id').eq('user_id', user_id).execute()
+        is_new_user = len(existing.data) == 0
+        
+        if is_new_user:
+            # Insertar usuario
+            user_data = {
+                'user_id': user_id,
+                'username': username,
+                'first_name': first_name,
+                'last_name': last_name
+            }
+            
+            result = supabase.table('direct_message_users').insert(user_data).execute()
+            
+            action = "REGISTRO_DIRECT_MESSAGE"
+            details = f"Username: {username}, Nombre: {first_name} {last_name}"
+            log_user_action(user_id, action, details)
+            
+            logging.info(f"✅ Usuario {user_id} registrado para mensajes directos")
+            return True
+        else:
+            logging.info(f"ℹ️ Usuario {user_id} ya está registrado para mensajes directos")
+            return True  # Ya está registrado, consideramos éxito
+    except Exception as e:
+        logging.error(f"❌ Error al agregar usuario de mensajes directos {user_id}: {e}")
+        return False
+
+def remove_direct_message_user(user_id):
+    """Remueve un usuario de los mensajes directos usando Supabase"""
+    try:
+        # Obtener información del usuario antes de eliminarlo
+        user_info = supabase.table('direct_message_users').select('username, first_name, last_name').eq('user_id', user_id).execute()
+        
+        # Eliminar usuario
+        result = supabase.table('direct_message_users').delete().eq('user_id', user_id).execute()
+        
+        # Registrar la acción en el log
+        if user_info.data:
+            user_data = user_info.data[0]
+            details = f"Username: {user_data.get('username')}, Nombre: {user_data.get('first_name')} {user_data.get('last_name')}"
+            log_user_action(user_id, "ELIMINACION_DIRECT_MESSAGE", details)
+        
+        logging.info(f"✅ Usuario {user_id} removido de mensajes directos")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error al remover usuario de mensajes directos {user_id}: {e}")
+        return False
+
+def send_direct_messages_to_users(alert_text, command_name):
+    """Envía mensajes directos a todos los usuarios registrados"""
+    try:
+        if not direct_message_users:
+            logging.info("ℹ️ No hay usuarios registrados para mensajes directos")
+            return
+        
+        message_text = f"🔔 ALERTA EN EL GRUPO 🔔\n\n"
+        message_text += f"Comando: {command_name}\n"
+        message_text += f"Mensaje: {alert_text}\n\n"
+        message_text += "Favor revisar el grupo para más detalles."
+        
+        sent_count = 0
+        for user_id in direct_message_users:
+            try:
+                bot.send_message(user_id, message_text)
+                sent_count += 1
+                logging.info(f"✅ Mensaje directo enviado a usuario {user_id}")
+            except Exception as e:
+                logging.error(f"❌ Error al enviar mensaje directo a usuario {user_id}: {e}")
+                # Si el usuario bloqueó al bot o no se puede contactar, removerlo
+                if "chat not found" in str(e).lower() or "blocked" in str(e).lower():
+                    logging.info(f"🗑️ Removiendo usuario {user_id} de mensajes directos (no contactable)")
+                    remove_direct_message_user(user_id)
+                    direct_message_users.discard(user_id)
+        
+        logging.info(f"📤 Mensajes directos enviados: {sent_count}/{len(direct_message_users)}")
+        
+    except Exception as e:
+        logging.error(f"❌ Error al enviar mensajes directos: {e}")
+
 def check_network_connectivity():
     """Verifica la conectividad de red antes de iniciar el bot"""
     try:
@@ -433,6 +526,9 @@ if not init_database():
 # Cargar usuarios registrados al iniciar
 registered_users = load_registered_users()
 
+# Cargar usuarios de mensajes directos al iniciar
+direct_message_users = load_direct_message_users()
+
 # Verificar conectividad antes de iniciar
 if not check_network_connectivity():
     logging.error("❌ No se pudo verificar la conectividad de red. El bot puede no funcionar correctamente.")
@@ -458,6 +554,8 @@ Comandos principales:
 • /allbug - Alerta de bug
 • /allerror - Alerta de error de cuota
 • /marcus - Mensaje especial de Marcus
+• /mensaje - Registrarse para mensajes directos de alertas
+• /nomensaje - Desregistrarse de mensajes directos
 • /register - Registrarse para menciones (o responder a un mensaje para registrar a otro)
 • /unregister - Desregistrarse
 • /help - Ver ayuda completa
@@ -477,6 +575,9 @@ Comandos disponibles:
 • /allbug - Alerta de bug (menciona a todos)
 • /allerror - Alerta de error de cuota (menciona a todos)
 • /marcus - Mensaje especial de Marcus
+• /mensaje - Registrarse para mensajes directos de alertas
+• /nomensaje - Desregistrarse de mensajes directos
+• /listamensajes - Muestra usuarios registrados para mensajes directos
 • /admins - Menciona solo a los administradores
 • /register - Registrarse para recibir menciones (o responder a un mensaje para registrar a otro usuario)
 • /unregister - Desregistrarse de las menciones
@@ -491,6 +592,7 @@ Notas importantes:
 • Solo funciona en grupos y supergrupos
 • Para mencionar a todos, el bot necesita permisos especiales
 • Los usuarios registrados recibirán menciones especiales
+• Los usuarios con /mensaje recibirán notificaciones directas
 • Los datos se guardan permanentemente en la base de datos
     """
     safe_reply_to(message, help_text, parse_mode=None)
@@ -677,6 +779,9 @@ def mention_all(message):
             # Crear texto de menciones seguro
             final_text = create_safe_mention_text(mention_text, mentions)
             safe_send_message(chat_id, final_text, parse_mode='Markdown')
+            
+            # Enviar mensajes directos a usuarios registrados
+            send_direct_messages_to_users("MENCIÓN GENERAL", "/all")
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -752,6 +857,9 @@ def mention_all_bug(message):
             # Crear texto de menciones seguro
             final_text = create_safe_mention_text(mention_text, mentions)
             safe_send_message(chat_id, final_text, parse_mode='Markdown')
+            
+            # Enviar mensajes directos a usuarios registrados
+            send_direct_messages_to_users("ALERTA DE BUG CRÍTICO", "/allbug")
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -828,6 +936,9 @@ def mention_all_error(message):
             # Crear texto de menciones seguro
             final_text = create_safe_mention_text(mention_text, mentions)
             safe_send_message(chat_id, final_text, parse_mode='Markdown')
+            
+            # Enviar mensajes directos a usuarios registrados
+            send_direct_messages_to_users("ALERTA DE ERROR DE CUOTA", "/allerror")
         else:
             safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
             
@@ -1015,6 +1126,112 @@ def create_database_backup(message):
             safe_reply_to(message, "❌ Error al crear el respaldo de la base de datos.")
     except Exception as e:
         logging.error(f"Error al crear respaldo: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['mensaje'])
+def mensaje_command(message):
+    """Registra al usuario para recibir mensajes directos de alertas"""
+    try:
+        user_id = message.from_user.id
+        username = message.from_user.username
+        first_name = message.from_user.first_name
+        last_name = message.from_user.last_name
+        
+        if user_id in direct_message_users:
+            safe_reply_to(message, "✅ Ya estás registrado para recibir mensajes directos de alertas.")
+            return
+        
+        # Agregar a la base de datos
+        if add_direct_message_user(user_id, username, first_name, last_name):
+            direct_message_users.add(user_id)
+            
+            mensaje_text = f"✅ ¡Registro exitoso para mensajes directos!\n\n"
+            if username:
+                mensaje_text += f"Usuario: @{username}\n"
+            else:
+                mensaje_text += f"Nombre: {first_name or 'Usuario'}\n"
+            mensaje_text += f"ID: {user_id}\n\n"
+            mensaje_text += "Ahora recibirás mensajes directos cada vez que haya una alerta en el grupo.\n"
+            mensaje_text += "Usa /nomensaje para desregistrarte."
+            
+            safe_reply_to(message, mensaje_text, parse_mode=None)
+        else:
+            safe_reply_to(message, "❌ Ocurrió un error al registrarte. Intenta de nuevo.")
+        
+    except Exception as e:
+        logging.error(f"Error en comando mensaje: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['nomensaje'])
+def nomensaje_command(message):
+    """Desregistra al usuario de los mensajes directos"""
+    try:
+        user_id = message.from_user.id
+        
+        if user_id not in direct_message_users:
+            safe_reply_to(message, "❌ No estás registrado para mensajes directos.")
+            return
+        
+        # Remover de la base de datos
+        if remove_direct_message_user(user_id):
+            direct_message_users.remove(user_id)
+            safe_reply_to(message, "✅ Te has desregistrado de los mensajes directos.")
+        else:
+            safe_reply_to(message, "❌ Ocurrió un error al desregistrarte. Intenta de nuevo.")
+        
+    except Exception as e:
+        logging.error(f"Error en comando nomensaje: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['listamensajes'])
+def listamensajes_command(message):
+    """Muestra los usuarios registrados para mensajes directos"""
+    try:
+        if not direct_message_users:
+            safe_reply_to(message, "📝 No hay usuarios registrados para mensajes directos.")
+            return
+        
+        # Obtener información detallada de Supabase
+        try:
+            result = supabase.table('direct_message_users').select('user_id, username, first_name, last_name, registered_at').order('registered_at', desc=True).execute()
+            
+            users_info = result.data
+            
+            count_text = f"📊 USUARIOS REGISTRADOS PARA MENSAJES DIRECTOS\n\n"
+            count_text += f"Total registrados: {len(direct_message_users)}\n\n"
+            
+            # Mostrar todos los usuarios registrados
+            count_text += "Usuarios registrados:\n"
+            for i, user_data in enumerate(users_info):
+                username = user_data.get('username')
+                first_name = user_data.get('first_name')
+                last_name = user_data.get('last_name')
+                user_id = user_data.get('user_id')
+                registered_at = user_data.get('registered_at')
+                
+                display_name = username if username else f"{first_name or 'Usuario'}"
+                if last_name:
+                    display_name += f" {last_name}"
+                # Limpiar el nombre para evitar problemas de Markdown
+                clean_display_name = clean_text_for_telegram(display_name)
+                count_text += f"{i+1}. {clean_display_name} (ID: {user_id})\n"
+            
+            count_text += "\nEstos usuarios recibirán mensajes directos cada vez que haya una alerta en el grupo."
+            
+        except Exception as db_error:
+            logging.error(f"Error al consultar Supabase: {db_error}")
+            count_text = f"""
+📊 USUARIOS REGISTRADOS PARA MENSAJES DIRECTOS
+
+Total registrados: {len(direct_message_users)}
+
+Estos usuarios recibirán mensajes directos cada vez que haya una alerta en el grupo.
+        """
+        
+        safe_reply_to(message, count_text, parse_mode=None)
+        
+    except Exception as e:
+        logging.error(f"Error al mostrar usuarios de mensajes directos: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 @bot.message_handler(commands=['marcus'])
