@@ -10,6 +10,8 @@ from telebot import types
 from requests.exceptions import ConnectionError, Timeout, RequestException
 from urllib3.exceptions import NewConnectionError, MaxRetryError
 from supabase import create_client, Client
+import re
+from bs4 import BeautifulSoup
 
 # Configuración del bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -267,6 +269,103 @@ def send_direct_messages_to_users(alert_text, command_name):
         
     except Exception as e:
         logging.error(f"❌ Error al enviar mensajes directos: {e}")
+
+def search_nba_season_start():
+    """Busca la fecha de inicio de la temporada NBA 2025-26"""
+    try:
+        # Búsqueda en Google para obtener la fecha de inicio
+        search_query = "NBA season 2025-26 start date when does it begin"
+        search_url = f"https://www.google.com/search?q={search_query}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(search_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        # Parsear el HTML
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Buscar fechas en el contenido
+        text_content = soup.get_text().lower()
+        
+        # Patrones comunes para fechas de NBA
+        date_patterns = [
+            r'october\s+\d{1,2},?\s+2025',
+            r'oct\s+\d{1,2},?\s+2025',
+            r'\d{1,2}/\d{1,2}/2025',
+            r'\d{1,2}-\d{1,2}-2025',
+            r'october\s+\d{1,2}',
+            r'oct\s+\d{1,2}'
+        ]
+        
+        found_dates = []
+        for pattern in date_patterns:
+            matches = re.findall(pattern, text_content)
+            found_dates.extend(matches)
+        
+        # Si no encontramos fechas específicas, usar fecha estimada
+        if not found_dates:
+            # La NBA generalmente comienza a finales de octubre
+            return datetime(2025, 10, 28)  # Fecha estimada típica
+        
+        # Procesar las fechas encontradas
+        for date_str in found_dates:
+            try:
+                # Intentar parsear diferentes formatos
+                if 'october' in date_str or 'oct' in date_str:
+                    # Extraer día
+                    day_match = re.search(r'\d{1,2}', date_str)
+                    if day_match:
+                        day = int(day_match.group())
+                        return datetime(2025, 10, day)
+                elif '/' in date_str or '-' in date_str:
+                    # Formato MM/DD/YYYY o MM-DD-YYYY
+                    parts = re.split(r'[/-]', date_str)
+                    if len(parts) >= 3:
+                        month = int(parts[0])
+                        day = int(parts[1])
+                        year = int(parts[2])
+                        if year == 2025:
+                            return datetime(year, month, day)
+            except (ValueError, IndexError):
+                continue
+        
+        # Fallback: fecha estimada
+        return datetime(2025, 10, 28)
+        
+    except Exception as e:
+        logging.error(f"❌ Error al buscar fecha de NBA: {e}")
+        # Fallback: fecha estimada típica
+        return datetime(2025, 10, 28)
+
+def calculate_days_until_nba():
+    """Calcula los días restantes hasta el inicio de la temporada NBA 2025-26"""
+    try:
+        # Obtener fecha de inicio
+        season_start = search_nba_season_start()
+        
+        # Fecha actual
+        today = datetime.now()
+        
+        # Calcular diferencia
+        if season_start > today:
+            days_left = (season_start - today).days
+            return days_left, season_start
+        else:
+            # Si ya pasó la fecha, buscar la próxima temporada
+            next_season = datetime(2026, 10, 28)  # Estimación para 2026-27
+            days_left = (next_season - today).days
+            return days_left, next_season
+            
+    except Exception as e:
+        logging.error(f"❌ Error al calcular días de NBA: {e}")
+        # Fallback
+        fallback_date = datetime(2025, 10, 28)
+        today = datetime.now()
+        days_left = (fallback_date - today).days
+        return max(0, days_left), fallback_date
 
 def check_network_connectivity():
     """Verifica la conectividad de red antes de iniciar el bot"""
@@ -566,6 +665,7 @@ Comandos principales:
 • /allbug - Alerta de bug
 • /allerror - Alerta de error de cuota
 • /marcus - Mensaje especial de Marcus
+• /nba - Días restantes para temporada NBA 2025-26
 • /mensaje - Registrarse para mensajes directos de alertas
 • /nomensaje - Desregistrarse de mensajes directos
 • /testdirecto - Probar si el bot puede enviar mensajes directos
@@ -588,6 +688,7 @@ Comandos disponibles:
 • /allbug - Alerta de bug (menciona a todos)
 • /allerror - Alerta de error de cuota (menciona a todos)
 • /marcus - Mensaje especial de Marcus
+• /nba - Días restantes para temporada NBA 2025-26
 • /mensaje - Registrarse para mensajes directos de alertas
 • /nomensaje - Desregistrarse de mensajes directos
 • /testdirecto - Probar si el bot puede enviar mensajes directos
@@ -1280,6 +1381,60 @@ def test_directo_command(message):
     except Exception as e:
         logging.error(f"Error en comando testdirecto: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['nba'])
+def nba_command(message):
+    """Comando para mostrar días restantes hasta el inicio de la temporada NBA 2025-26"""
+    try:
+        # Mostrar mensaje de carga
+        loading_msg = safe_reply_to(message, "🏀 Buscando información de la NBA...", parse_mode=None)
+        
+        # Calcular días restantes
+        days_left, season_start = calculate_days_until_nba()
+        
+        # Formatear fecha de inicio
+        start_date_str = season_start.strftime("%d de %B de %Y")
+        
+        # Crear mensaje con emojis y formato
+        nba_text = f"🏀 **TEMPORADA NBA 2025-26** 🏀\n\n"
+        nba_text += f"📅 **Fecha de inicio:** {start_date_str}\n"
+        nba_text += f"⏰ **Días restantes:** {days_left} días\n\n"
+        
+        if days_left > 0:
+            nba_text += f"🔥 ¡Solo quedan {days_left} días para el inicio de la temporada!\n"
+            nba_text += f"🎯 Los equipos están preparándose para la acción.\n"
+        else:
+            nba_text += f"🎉 ¡La temporada ya comenzó!\n"
+            nba_text += f"🏆 ¡Disfruta de los juegos de la NBA!\n"
+        
+        nba_text += f"\n📊 *Información actualizada al {datetime.now().strftime('%d/%m/%Y %H:%M')}*"
+        
+        # Enviar mensaje final
+        safe_reply_to(message, nba_text, parse_mode='Markdown')
+        
+        # Log de la acción
+        log_user_action(message.from_user.id, "NBA", f"Consultó días restantes: {days_left} días")
+        
+        logging.info(f"✅ Comando NBA ejecutado: {days_left} días restantes")
+        
+    except Exception as e:
+        logging.error(f"Error en comando NBA: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al buscar información de la NBA. Intenta de nuevo más tarde.")
+        
+        # Fallback con información básica
+        try:
+            fallback_date = datetime(2025, 10, 28)
+            today = datetime.now()
+            days_left = max(0, (fallback_date - today).days)
+            
+            fallback_text = f"🏀 **TEMPORADA NBA 2025-26** 🏀\n\n"
+            fallback_text += f"📅 **Fecha estimada de inicio:** 28 de Octubre de 2025\n"
+            fallback_text += f"⏰ **Días restantes:** {days_left} días\n\n"
+            fallback_text += f"⚠️ *Información estimada (no se pudo conectar a internet)*"
+            
+            safe_reply_to(message, fallback_text, parse_mode='Markdown')
+        except:
+            safe_reply_to(message, "❌ Error al procesar la solicitud de NBA.")
 
 @bot.message_handler(commands=['marcus'])
 def marcus_command(message):

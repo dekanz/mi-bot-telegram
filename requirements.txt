@@ -4,3 +4,4 @@ urllib3>=1.26.0
 flask==2.3.3
 supabase==1.0.4
 psycopg2-binary==2.9.9
+beautifulsoup4==4.12.2
