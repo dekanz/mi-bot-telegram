@@ -308,7 +308,7 @@ def search_nba_season_start():
         # Si no encontramos fechas específicas, usar fecha estimada
         if not found_dates:
             # La NBA generalmente comienza a finales de octubre
-            return datetime(2025, 10, 28)  # Fecha estimada típica
+            return datetime(2025, 10, 22)  # Fecha estimada típica
         
         # Procesar las fechas encontradas
         for date_str in found_dates:
@@ -333,12 +333,12 @@ def search_nba_season_start():
                 continue
         
         # Fallback: fecha estimada
-        return datetime(2025, 10, 28)
+        return datetime(2025, 10, 22)
         
     except Exception as e:
         logging.error(f"❌ Error al buscar fecha de NBA: {e}")
         # Fallback: fecha estimada típica
-        return datetime(2025, 10, 28)
+        return datetime(2025, 10, 22)
 
 def calculate_days_until_nba():
     """Calcula los días restantes hasta el inicio de la temporada NBA 2025-26"""
@@ -355,14 +355,14 @@ def calculate_days_until_nba():
             return days_left, season_start
         else:
             # Si ya pasó la fecha, buscar la próxima temporada
-            next_season = datetime(2026, 10, 28)  # Estimación para 2026-27
+            next_season = datetime(2026, 10, 22)  # Estimación para 2026-27
             days_left = (next_season - today).days
             return days_left, next_season
             
     except Exception as e:
         logging.error(f"❌ Error al calcular días de NBA: {e}")
         # Fallback
-        fallback_date = datetime(2025, 10, 28)
+        fallback_date = datetime(2025, 10, 22)
         today = datetime.now()
         days_left = (fallback_date - today).days
         return max(0, days_left), fallback_date
@@ -1423,12 +1423,12 @@ def nba_command(message):
         
         # Fallback con información básica
         try:
-            fallback_date = datetime(2025, 10, 28)
+            fallback_date = datetime(2025, 10, 22)
             today = datetime.now()
             days_left = max(0, (fallback_date - today).days)
             
             fallback_text = f"🏀 **TEMPORADA NBA 2025-26** 🏀\n\n"
-            fallback_text += f"📅 **Fecha estimada de inicio:** 28 de Octubre de 2025\n"
+            fallback_text += f"📅 **Fecha estimada de inicio:** 22 de Octubre de 2025\n"
             fallback_text += f"⏰ **Días restantes:** {days_left} días\n\n"
             fallback_text += f"⚠️ *Información estimada (no se pudo conectar a internet)*"
             
