@@ -5,3 +5,4 @@ flask==2.3.3
 supabase==1.0.4
 psycopg2-binary==2.9.9
 beautifulsoup4==4.12.2
+pytz==2023.3

@@ -12,6 +12,7 @@ from urllib3.exceptions import NewConnectionError, MaxRetryError
 from supabase import create_client, Client
 import re
 from bs4 import BeautifulSoup
+import pytz
 
 # Configuración del bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -308,7 +309,7 @@ def search_nba_season_start():
         # Si no encontramos fechas específicas, usar fecha estimada
         if not found_dates:
             # La NBA generalmente comienza a finales de octubre
-            return datetime(2025, 10, 22)  # Fecha estimada típica
+            return datetime(2025, 10, 21)  # Fecha estimada típica
         
         # Procesar las fechas encontradas
         for date_str in found_dates:
@@ -333,12 +334,12 @@ def search_nba_season_start():
                 continue
         
         # Fallback: fecha estimada
-        return datetime(2025, 10, 22)
+        return datetime(2025, 10, 21)
         
     except Exception as e:
         logging.error(f"❌ Error al buscar fecha de NBA: {e}")
         # Fallback: fecha estimada típica
-        return datetime(2025, 10, 22)
+        return datetime(2025, 10, 21)
 
 def calculate_days_until_nba():
     """Calcula los días restantes hasta el inicio de la temporada NBA 2025-26"""
@@ -346,8 +347,9 @@ def calculate_days_until_nba():
         # Obtener fecha de inicio
         season_start = search_nba_season_start()
         
-        # Fecha actual
-        today = datetime.now()
+        # Fecha actual en horario de Chile
+        chile_tz = pytz.timezone('America/Santiago')
+        today = datetime.now(chile_tz)
         
         # Calcular diferencia
         if season_start > today:
@@ -355,15 +357,16 @@ def calculate_days_until_nba():
             return days_left, season_start
         else:
             # Si ya pasó la fecha, buscar la próxima temporada
-            next_season = datetime(2026, 10, 22)  # Estimación para 2026-27
+            next_season = datetime(2026, 10, 21)  # Estimación para 2026-27
             days_left = (next_season - today).days
             return days_left, next_season
             
     except Exception as e:
         logging.error(f"❌ Error al calcular días de NBA: {e}")
         # Fallback
-        fallback_date = datetime(2025, 10, 22)
-        today = datetime.now()
+        fallback_date = datetime(2025, 10, 21)
+        chile_tz = pytz.timezone('America/Santiago')
+        today = datetime.now(chile_tz)
         days_left = (fallback_date - today).days
         return max(0, days_left), fallback_date
 
@@ -1407,7 +1410,10 @@ def nba_command(message):
             nba_text += f"🎉 ¡La temporada ya comenzó!\n"
             nba_text += f"🏆 ¡Disfruta de los juegos de la NBA!\n"
         
-        nba_text += f"\n📊 *Información actualizada al {datetime.now().strftime('%d/%m/%Y %H:%M')}*"
+        # Mostrar hora en horario de Chile
+        chile_tz = pytz.timezone('America/Santiago')
+        chile_time = datetime.now(chile_tz)
+        nba_text += f"\n📊 *Información actualizada al {chile_time.strftime('%d/%m/%Y %H:%M')} (Chile)*"
         
         # Enviar mensaje final
         safe_reply_to(message, nba_text, parse_mode='Markdown')
@@ -1423,14 +1429,16 @@ def nba_command(message):
         
         # Fallback con información básica
         try:
-            fallback_date = datetime(2025, 10, 22)
-            today = datetime.now()
+            fallback_date = datetime(2025, 10, 21)
+            chile_tz = pytz.timezone('America/Santiago')
+            today = datetime.now(chile_tz)
             days_left = max(0, (fallback_date - today).days)
             
             fallback_text = f"🏀 **TEMPORADA NBA 2025-26** 🏀\n\n"
-            fallback_text += f"📅 **Fecha estimada de inicio:** 22 de Octubre de 2025\n"
+            fallback_text += f"📅 **Fecha estimada de inicio:** 21 de Octubre de 2025\n"
             fallback_text += f"⏰ **Días restantes:** {days_left} días\n\n"
-            fallback_text += f"⚠️ *Información estimada (no se pudo conectar a internet)*"
+            fallback_text += f"⚠️ *Información estimada (no se pudo conectar a internet)*\n"
+            fallback_text += f"📊 *Actualizado al {today.strftime('%d/%m/%Y %H:%M')} (Chile)*"
             
             safe_reply_to(message, fallback_text, parse_mode='Markdown')
         except:
