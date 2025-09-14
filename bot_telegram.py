@@ -347,9 +347,17 @@ def calculate_days_until_nba():
         # Obtener fecha de inicio
         season_start = search_nba_season_start()
         
-        # Fecha actual en horario de Chile
+        # Fecha actual en horario de Chile (CLST - Chile Summer Time)
         chile_tz = pytz.timezone('America/Santiago')
         today = datetime.now(chile_tz)
+        
+        # Verificar que estemos usando CLST (UTC-3)
+        if today.dst() != timedelta(0):
+            # Estamos en horario de verano (CLST)
+            logging.info(f"✅ Usando CLST (Chile Summer Time) - UTC-3")
+        else:
+            # Estamos en horario estándar (CLT)
+            logging.info(f"⚠️ Usando CLT (Chile Standard Time) - UTC-4")
         
         # Calcular diferencia
         if season_start > today:
@@ -1410,10 +1418,14 @@ def nba_command(message):
             nba_text += f"🎉 ¡La temporada ya comenzó!\n"
             nba_text += f"🏆 ¡Disfruta de los juegos de la NBA!\n"
         
-        # Mostrar hora en horario de Chile
+        # Mostrar hora en horario de Chile (CLST)
         chile_tz = pytz.timezone('America/Santiago')
         chile_time = datetime.now(chile_tz)
-        nba_text += f"\n📊 *Información actualizada al {chile_time.strftime('%d/%m/%Y %H:%M')} (Chile)*"
+        
+        # Determinar si es CLST o CLT
+        timezone_name = "CLST" if chile_time.dst() != timedelta(0) else "CLT"
+        
+        nba_text += f"\n📊 *Información actualizada al {chile_time.strftime('%d/%m/%Y %H:%M')} ({timezone_name})*"
         
         # Enviar mensaje final
         safe_reply_to(message, nba_text, parse_mode='Markdown')
@@ -1438,7 +1450,9 @@ def nba_command(message):
             fallback_text += f"📅 **Fecha estimada de inicio:** 21 de Octubre de 2025\n"
             fallback_text += f"⏰ **Días restantes:** {days_left} días\n\n"
             fallback_text += f"⚠️ *Información estimada (no se pudo conectar a internet)*\n"
-            fallback_text += f"📊 *Actualizado al {today.strftime('%d/%m/%Y %H:%M')} (Chile)*"
+            # Determinar si es CLST o CLT
+            timezone_name = "CLST" if today.dst() != timedelta(0) else "CLT"
+            fallback_text += f"📊 *Actualizado al {today.strftime('%d/%m/%Y %H:%M')} ({timezone_name})*"
             
             safe_reply_to(message, fallback_text, parse_mode='Markdown')
         except:
