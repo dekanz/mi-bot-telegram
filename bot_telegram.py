@@ -309,7 +309,8 @@ def search_nba_season_start():
         # Si no encontramos fechas específicas, usar fecha estimada
         if not found_dates:
             # La NBA generalmente comienza a finales de octubre
-            return datetime(2025, 10, 21)  # Fecha estimada típica
+            chile_tz = pytz.timezone('America/Santiago')
+            return chile_tz.localize(datetime(2025, 10, 21))  # Fecha estimada típica
         
         # Procesar las fechas encontradas
         for date_str in found_dates:
@@ -320,7 +321,8 @@ def search_nba_season_start():
                     day_match = re.search(r'\d{1,2}', date_str)
                     if day_match:
                         day = int(day_match.group())
-                        return datetime(2025, 10, day)
+                        chile_tz = pytz.timezone('America/Santiago')
+                        return chile_tz.localize(datetime(2025, 10, day))
                 elif '/' in date_str or '-' in date_str:
                     # Formato MM/DD/YYYY o MM-DD-YYYY
                     parts = re.split(r'[/-]', date_str)
@@ -329,17 +331,20 @@ def search_nba_season_start():
                         day = int(parts[1])
                         year = int(parts[2])
                         if year == 2025:
-                            return datetime(year, month, day)
+                            chile_tz = pytz.timezone('America/Santiago')
+                            return chile_tz.localize(datetime(year, month, day))
             except (ValueError, IndexError):
                 continue
         
         # Fallback: fecha estimada
-        return datetime(2025, 10, 21)
+        chile_tz = pytz.timezone('America/Santiago')
+        return chile_tz.localize(datetime(2025, 10, 21))
         
     except Exception as e:
         logging.error(f"❌ Error al buscar fecha de NBA: {e}")
         # Fallback: fecha estimada típica
-        return datetime(2025, 10, 21)
+        chile_tz = pytz.timezone('America/Santiago')
+        return chile_tz.localize(datetime(2025, 10, 21))
 
 def calculate_days_until_nba():
     """Calcula los días restantes hasta el inicio de la temporada NBA 2025-26"""
@@ -359,21 +364,26 @@ def calculate_days_until_nba():
             # Estamos en horario estándar (CLT)
             logging.info(f"⚠️ Usando CLT (Chile Standard Time) - UTC-4")
         
+        # Convertir season_start a la misma zona horaria que today
+        if season_start.tzinfo is None:
+            # Si season_start no tiene zona horaria, asumir que es en horario de Chile
+            season_start = chile_tz.localize(season_start)
+        
         # Calcular diferencia
         if season_start > today:
             days_left = (season_start - today).days
             return days_left, season_start
         else:
             # Si ya pasó la fecha, buscar la próxima temporada
-            next_season = datetime(2026, 10, 21)  # Estimación para 2026-27
+            next_season = chile_tz.localize(datetime(2026, 10, 21))  # Estimación para 2026-27
             days_left = (next_season - today).days
             return days_left, next_season
             
     except Exception as e:
         logging.error(f"❌ Error al calcular días de NBA: {e}")
         # Fallback
-        fallback_date = datetime(2025, 10, 21)
         chile_tz = pytz.timezone('America/Santiago')
+        fallback_date = chile_tz.localize(datetime(2025, 10, 21))
         today = datetime.now(chile_tz)
         days_left = (fallback_date - today).days
         return max(0, days_left), fallback_date
