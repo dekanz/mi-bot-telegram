@@ -715,6 +715,7 @@ Comandos principales:
 • /allbug - Alerta de bug
 • /allerror - Alerta de error de cuota
 • /marcus - Mensaje especial de Marcus
+• /comunista - Envía mensaje directo al comunista
 • /nba - Días restantes para temporada NBA 2025-26
 • /mensaje - Registrarse para mensajes directos de alertas
 • /nomensaje - Desregistrarse de mensajes directos
@@ -738,6 +739,7 @@ Comandos disponibles:
 • /allbug - Alerta de bug (menciona a todos)
 • /allerror - Alerta de error de cuota (menciona a todos)
 • /marcus - Mensaje especial de Marcus
+• /comunista - Envía mensaje directo al comunista
 • /nba - Días restantes para temporada NBA 2025-26
 • /mensaje - Registrarse para mensajes directos de alertas
 • /nomensaje - Desregistrarse de mensajes directos
@@ -1506,6 +1508,43 @@ def marcus_command(message):
         log_user_action(message.from_user.id, "MARCUS", "Usuario consultó comando Marcus")
     except Exception as e:
         logging.error(f"Error en comando marcus: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['comunista'])
+def comunista_command(message):
+    """Comando especial que envía mensaje directo al usuario comunista"""
+    try:
+        # ID específico del usuario comunista
+        comunista_user_id = 533816131
+        
+        # Mensaje especial para el comunista
+        comunista_message = "HAY UNA NUEVA FREEBET DISPONIBLE COMUNISTA RE CONCHADETUMADRE REVISAR EL GRUPO A LA BREVEDAD, VIVA EL COMUNISMO"
+        
+        # Enviar mensaje directo al usuario comunista
+        try:
+            bot.send_message(comunista_user_id, comunista_message)
+            logging.info(f"✅ Mensaje comunista enviado exitosamente al usuario {comunista_user_id}")
+            
+            # Responder en el grupo que se envió el mensaje
+            safe_reply_to(message, "✅ Mensaje enviado al comunista. ¡Viva el comunismo! 🚩")
+            
+            # Registrar la acción
+            log_user_action(message.from_user.id, "COMUNISTA", f"Envió mensaje comunista al usuario {comunista_user_id}")
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            if "bot can't initiate conversation" in error_str:
+                safe_reply_to(message, "❌ No se pudo enviar el mensaje al comunista. El usuario debe iniciar conversación con el bot primero.")
+                logging.warning(f"⚠️ Usuario comunista {comunista_user_id} no ha iniciado conversación con el bot")
+            elif "chat not found" in error_str or "blocked" in error_str:
+                safe_reply_to(message, "❌ No se pudo contactar al comunista. Usuario no disponible.")
+                logging.warning(f"⚠️ Usuario comunista {comunista_user_id} no contactable")
+            else:
+                safe_reply_to(message, f"❌ Error al enviar mensaje al comunista: {e}")
+                logging.error(f"❌ Error al enviar mensaje comunista: {e}")
+        
+    except Exception as e:
+        logging.error(f"Error en comando comunista: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 
