@@ -13,6 +13,7 @@ from supabase import create_client, Client
 import re
 from bs4 import BeautifulSoup
 import pytz
+import sys
 
 # Configuración del bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -29,6 +30,34 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     print("   SUPABASE_URL=https://tu-proyecto.supabase.co")
     print("   SUPABASE_KEY=tu-clave-supabase")
     exit(1)
+
+# Aplicar parche temporal para el error de Story
+def apply_story_patch():
+    """Aplica un parche temporal para el error de compatibilidad con Story"""
+    try:
+        # Importar la clase Story
+        from telebot.types import Story
+        
+        # Guardar el constructor original
+        original_init = Story.__init__
+        
+        def patched_init(self, **kwargs):
+            # Remover el campo 'chat' si existe, ya que causa problemas
+            if 'chat' in kwargs:
+                logging.warning("🔧 Removiendo campo 'chat' problemático de Story")
+                del kwargs['chat']
+            # Llamar al constructor original con los parámetros limpios
+            return original_init(self, **kwargs)
+        
+        # Aplicar el parche
+        Story.__init__ = patched_init
+        logging.info("✅ Parche temporal aplicado para la clase Story")
+        
+    except Exception as e:
+        logging.warning(f"⚠️ No se pudo aplicar el parche de Story: {e}")
+
+# Aplicar el parche antes de crear el bot
+apply_story_patch()
 
 # Crear instancia del bot
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -1580,12 +1609,13 @@ def start_bot_with_retry():
             logging.info(f"Token configurado: {'✅' if BOT_TOKEN else '❌'}")
             logging.info(f"Usuarios registrados: {len(registered_users)}")
             
-            # Configurar el bot con timeouts normales
+            # Configurar el bot con timeouts normales y manejo de errores mejorado
             bot.infinity_polling(
                 timeout=20, 
                 long_polling_timeout=10,
                 interval=2,
-                none_stop=True
+                none_stop=True,
+                allowed_updates=['message', 'callback_query']  # Solo procesar mensajes y callbacks
             )
             
         except (ConnectionError, Timeout, NewConnectionError, MaxRetryError) as e:
@@ -1615,6 +1645,15 @@ def start_bot_with_retry():
                     # Limpieza forzada antes de reintentar
                     logging.info("🧹 Limpieza forzada antes de reintentar...")
                     force_cleanup_all_instances()
+                else:
+                    logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
+                    break
+            elif "Story.__init__() got an unexpected keyword argument 'chat'" in error_str:
+                logging.error(f"❌ Error de compatibilidad con Story en intento {attempt + 1}: {e}")
+                logging.info("🔧 Este es un error conocido de compatibilidad con la API de Telegram")
+                logging.info("🔄 Reintentando con configuración mejorada...")
+                if attempt < max_restart_attempts - 1:
+                    time.sleep(restart_delay)
                 else:
                     logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
                     break
