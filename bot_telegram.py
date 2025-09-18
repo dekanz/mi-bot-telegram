@@ -1515,7 +1515,7 @@ def comunista_command(message):
     """Comando especial que envía mensaje directo al usuario comunista"""
     try:
         # ID específico del usuario comunista
-        comunista_user_id = 533816131
+        comunista_user_id = 5338161631
         
         # Mensaje especial para el comunista
         comunista_message = "HAY UNA NUEVA FREEBET DISPONIBLE COMUNISTA RE CONCHADETUMADRE REVISAR EL GRUPO A LA BREVEDAD, VIVA EL COMUNISMO"
