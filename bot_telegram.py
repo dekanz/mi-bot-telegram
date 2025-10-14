@@ -722,6 +722,7 @@ Comandos principales:
 • /testdirecto - Probar si el bot puede enviar mensajes directos
 • /register - Registrarse para menciones (o responder a un mensaje para registrar a otro)
 • /unregister - Desregistrarse
+• /eliminar_usuario - [ADMIN] Eliminar usuario del registro
 • /help - Ver ayuda completa
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
@@ -748,11 +749,17 @@ Comandos disponibles:
 • /admins - Menciona solo a los administradores
 • /register - Registrarse para recibir menciones (o responder a un mensaje para registrar a otro usuario)
 • /unregister - Desregistrarse de las menciones
+• /eliminar_usuario - [ADMIN] Eliminar usuario del registro de menciones
 • /registered - Muestra usuarios registrados
 • /historial - Muestra historial de registros
 • /backup - Crea respaldo de la base de datos
 • /count - Muestra estadísticas del grupo
 • /help - Muestra esta ayuda
+
+Comandos de administrador:
+• /eliminar_usuario - Elimina un usuario del registro de menciones
+  Uso: Responder a un mensaje + /eliminar_usuario
+  O bien: /eliminar_usuario <ID_de_usuario>
 
 Notas importantes:
 • El bot debe ser administrador del grupo
@@ -1432,6 +1439,124 @@ def test_directo_command(message):
         
     except Exception as e:
         logging.error(f"Error en comando testdirecto: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['eliminar_usuario'])
+def eliminar_usuario_command(message):
+    """Comando de administrador para eliminar un usuario del registro de menciones del bot"""
+    try:
+        chat_id = message.chat.id
+        
+        # Verificar que el comando se use en un grupo
+        if message.chat.type not in ['group', 'supergroup']:
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
+            return
+        
+        # Verificar que el usuario que ejecuta el comando sea administrador
+        try:
+            chat_member = bot.get_chat_member(chat_id, message.from_user.id)
+            if chat_member.status not in ['creator', 'administrator']:
+                safe_reply_to(message, "❌ Solo los administradores pueden usar este comando.")
+                logging.warning(f"⚠️ Usuario {message.from_user.id} intentó usar /eliminar_usuario sin ser administrador")
+                return
+        except Exception as e:
+            logging.error(f"❌ Error al verificar permisos de administrador: {e}")
+            safe_reply_to(message, "❌ No se pudo verificar tus permisos de administrador.")
+            return
+        
+        # Opción 1: Responder a un mensaje del usuario a eliminar
+        if message.reply_to_message and message.reply_to_message.from_user:
+            target_user = message.reply_to_message.from_user
+            target_user_id = target_user.id
+            username = target_user.username
+            first_name = target_user.first_name
+            last_name = target_user.last_name
+            
+            # Verificar si el usuario está registrado
+            if target_user_id not in registered_users:
+                safe_reply_to(message, f"❌ El usuario {first_name} no está registrado para menciones.")
+                return
+            
+            # Eliminar usuario
+            if remove_registered_user(target_user_id):
+                registered_users.discard(target_user_id)
+                
+                response_text = f"✅ Usuario eliminado del registro de menciones\n\n"
+                if username:
+                    response_text += f"Usuario: @{username}\n"
+                else:
+                    response_text += f"Nombre: {first_name or 'Usuario'}\n"
+                response_text += f"ID: {target_user_id}\n\n"
+                response_text += "Este usuario ya no recibirá menciones en los comandos /all, /allbug, /allerror, etc."
+                
+                safe_reply_to(message, response_text, parse_mode=None)
+                log_user_action(message.from_user.id, "ADMIN_ELIMINAR_USUARIO", f"Eliminó a {first_name} ({target_user_id}) del registro de menciones")
+            else:
+                safe_reply_to(message, "❌ Error al eliminar al usuario. Intenta de nuevo más tarde.")
+        
+        # Opción 2: Proporcionar ID del usuario como argumento
+        elif message.text and len(message.text.split()) > 1:
+            try:
+                # Extraer el ID del comando
+                text_parts = message.text.split()
+                target_user_id_str = text_parts[1]
+                
+                # Validar que sea un número
+                if not target_user_id_str.isdigit():
+                    safe_reply_to(message, "❌ El ID del usuario debe ser un número.\n\nUso: /eliminar_usuario <ID> o responde a un mensaje + /eliminar_usuario")
+                    return
+                
+                target_user_id = int(target_user_id_str)
+                
+                # Verificar si el usuario está registrado
+                if target_user_id not in registered_users:
+                    safe_reply_to(message, f"❌ El usuario con ID {target_user_id} no está registrado para menciones.")
+                    return
+                
+                # Obtener información del usuario de la base de datos
+                try:
+                    user_info_result = supabase.table('registered_users').select('username, first_name, last_name').eq('user_id', target_user_id).execute()
+                    
+                    if user_info_result.data:
+                        user_data = user_info_result.data[0]
+                        username = user_data.get('username')
+                        first_name = user_data.get('first_name')
+                        last_name = user_data.get('last_name')
+                    else:
+                        username = None
+                        first_name = "Usuario"
+                        last_name = None
+                except Exception as db_error:
+                    logging.error(f"Error al obtener información del usuario: {db_error}")
+                    username = None
+                    first_name = "Usuario"
+                    last_name = None
+                
+                # Eliminar usuario
+                if remove_registered_user(target_user_id):
+                    registered_users.discard(target_user_id)
+                    
+                    response_text = f"✅ Usuario eliminado del registro de menciones\n\n"
+                    if username:
+                        response_text += f"Usuario: @{username}\n"
+                    else:
+                        response_text += f"Nombre: {first_name or 'Usuario'}\n"
+                    response_text += f"ID: {target_user_id}\n\n"
+                    response_text += "Este usuario ya no recibirá menciones en los comandos /all, /allbug, /allerror, etc."
+                    
+                    safe_reply_to(message, response_text, parse_mode=None)
+                    log_user_action(message.from_user.id, "ADMIN_ELIMINAR_USUARIO", f"Eliminó a {first_name} ({target_user_id}) del registro de menciones")
+                else:
+                    safe_reply_to(message, "❌ Error al eliminar al usuario. Intenta de nuevo más tarde.")
+                    
+            except ValueError:
+                safe_reply_to(message, "❌ El ID del usuario debe ser un número válido.\n\nUso: /eliminar_usuario <ID> o responde a un mensaje + /eliminar_usuario")
+        else:
+            # No hay reply ni argumento
+            safe_reply_to(message, "❌ Debes responder a un mensaje del usuario a eliminar o proporcionar su ID.\n\nUso:\n• Responder a un mensaje + /eliminar_usuario\n• /eliminar_usuario <ID>")
+        
+    except Exception as e:
+        logging.error(f"Error en comando eliminar_usuario: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 @bot.message_handler(commands=['nba'])
