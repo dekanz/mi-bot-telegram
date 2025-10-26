@@ -1712,61 +1712,11 @@ def clan_war_command(message):
         
         clan_war_text += "🎯 ¡REVISA TU CLAN! ¡PREPARA TU MAZO! ¡A LA GUERRA! 🎯"
         
-        # Obtener administradores
-        administrators = bot.get_chat_administrators(chat_id)
+        # Solo enviar el mensaje sin menciones
+        safe_send_message(chat_id, clan_war_text, parse_mode='Markdown')
         
-        # Lista para almacenar las menciones
-        mentions = []
-        mentioned_users = set()
-        
-        # Agregar administradores primero
-        for admin in administrators:
-            if not admin.user.is_bot:
-                if admin.user.username:
-                    clean_username = clean_name_for_mention(admin.user.username)
-                    if f"@{clean_username}" not in mentioned_users:
-                        mentions.append(f"@{clean_username}")
-                        mentioned_users.add(f"@{clean_username}")
-                else:
-                    user_id = admin.user.id
-                    if f"user_{user_id}" not in mentioned_users:
-                        full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
-                        if admin.user.last_name:
-                            full_name += f" {clean_name_for_mention(admin.user.last_name)}"
-                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
-                        mentioned_users.add(f"user_{user_id}")
-        
-        # Agregar usuarios registrados que no sean administradores
-        for user_id in registered_users:
-            try:
-                # Verificar si el usuario está en el grupo
-                member = bot.get_chat_member(chat_id, user_id)
-                if member.status in ['member', 'administrator', 'creator']:
-                    if member.user.username:
-                        clean_username = clean_name_for_mention(member.user.username)
-                        if f"@{clean_username}" not in mentioned_users:
-                            mentions.append(f"@{clean_username}")
-                            mentioned_users.add(f"@{clean_username}")
-                    else:
-                        if f"user_{user_id}" not in mentioned_users:
-                            full_name = escape_markdown(member.user.first_name)
-                            if member.user.last_name:
-                                full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
-                            mentioned_users.add(f"user_{user_id}")
-            except Exception as e:
-                logging.error(f"Error al obtener usuario {user_id}: {e}")
-                continue
-        
-        if mentions:
-            # Crear texto de menciones seguro
-            final_text = create_safe_mention_text(clan_war_text, mentions)
-            safe_send_message(chat_id, final_text, parse_mode='Markdown')
-            
-            # Enviar mensajes directos a usuarios registrados
-            send_direct_messages_to_users("¡GUERRA DE CLANES! ¡Llamado a todas las tropas!", "/cr")
-        else:
-            safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
+        # Enviar mensajes directos a usuarios registrados
+        send_direct_messages_to_users("¡GUERRA DE CLANES! ¡Llamado a todas las tropas!", "/cr")
             
     except Exception as e:
         logging.error(f"Error al invitar a guerra de clanes: {e}")
