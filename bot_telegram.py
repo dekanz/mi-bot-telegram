@@ -1712,11 +1712,8 @@ def clan_war_command(message):
         
         clan_war_text += "🎯 ¡REVISA TU CLAN! ¡PREPARA TU MAZO! ¡A LA GUERRA! 🎯"
         
-        # Solo enviar el mensaje sin menciones
+        # Solo enviar el mensaje sin menciones ni mensajes directos
         safe_send_message(chat_id, clan_war_text, parse_mode='Markdown')
-        
-        # Enviar mensajes directos a usuarios registrados
-        send_direct_messages_to_users("¡GUERRA DE CLANES! ¡Llamado a todas las tropas!", "/cr")
             
     except Exception as e:
         logging.error(f"Error al invitar a guerra de clanes: {e}")
