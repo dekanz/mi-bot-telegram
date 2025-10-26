@@ -714,6 +714,7 @@ Comandos principales:
 • /all - Menciona a todos
 • /allbug - Alerta de bug
 • /allerror - Alerta de error de cuota
+• /cr - ¡Guerra de Clanes! Invita a todos a jugar
 • /marcus - Mensaje especial de Marcus
 • /comunista - Envía mensaje directo al comunista
 • /nba - Días restantes para temporada NBA 2025-26
@@ -739,6 +740,7 @@ Comandos disponibles:
 • /all - Menciona a todos los miembros del grupo
 • /allbug - Alerta de bug (menciona a todos)
 • /allerror - Alerta de error de cuota (menciona a todos)
+• /cr - ¡Guerra de Clanes! Invita a todo el clan a jugar con mensaje ultra motivacional
 • /marcus - Mensaje especial de Marcus
 • /comunista - Envía mensaje directo al comunista
 • /nba - Días restantes para temporada NBA 2025-26
@@ -1670,6 +1672,104 @@ def comunista_command(message):
         
     except Exception as e:
         logging.error(f"Error en comando comunista: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['cr'])
+def clan_war_command(message):
+    """Comando para invitar a todo el grupo a jugar la guerra de clanes"""
+    try:
+        chat_id = message.chat.id
+        
+        if message.chat.type not in ['group', 'supergroup']:
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
+            return
+        
+        # Obtener información del chat
+        chat_member_count = bot.get_chat_member_count(chat_id)
+        
+        # Mensaje ULTRA MOTIVACIONAL para la guerra de clanes
+        clan_war_text = "⚔️🔥 ¡GUERRA DE CLANES! 🔥⚔️\n\n"
+        clan_war_text += "🎯 ¡LLAMADO A TODAS LAS TROPAS! 🎯\n\n"
+        clan_war_text += "¡CLASHEROS! ¡La Guerra de Clanes ha comenzado! "
+        clan_war_text += "El enemigo está atacando nuestras torres y necesitamos tu poder. "
+        clan_war_text += "Es hora de mostrar el poder de nuestro clan y reclamar la victoria.\n\n"
+        
+        clan_war_text += "🏰 NUESTRA MISIÓN: Destruir las torres enemigas y ganar la guerra 🏰\n\n"
+        
+        clan_war_text += "⚡ Usa tus mejores MAZOS y ataques más devastadores\n"
+        clan_war_text += "💎 Los trofeos del clan dependen de cada uno de vosotros\n"
+        clan_war_text += "🎯 Cada ataque cuenta, cada torre destruida nos acerca a la victoria\n"
+        clan_war_text += "🏆 Trabajemos juntos para ganar esta guerra\n\n"
+        
+        clan_war_text += "🚀 ¡NO HAY TIEMPO QUE PERDER! 🚀\n"
+        clan_war_text += "Cada segundo cuenta, cada ataque importa para ganar la guerra. "
+        clan_war_text += "El destino de nuestro clan está en vuestras manos.\n\n"
+        
+        clan_war_text += "💥 ¡VAMOS A GANAR ESTO! 💥\n"
+        clan_war_text += "La victoria no es solo una opción, ¡ES NUESTRO DESTINO!\n\n"
+        
+        clan_war_text += "⚔️ ¡TODOS A LA BATALLA EN CLASH ROYALE! ⚔️\n\n"
+        
+        clan_war_text += "🎯 ¡REVISA TU CLAN! ¡PREPARA TU MAZO! ¡A LA GUERRA! 🎯"
+        
+        # Obtener administradores
+        administrators = bot.get_chat_administrators(chat_id)
+        
+        # Lista para almacenar las menciones
+        mentions = []
+        mentioned_users = set()
+        
+        # Agregar administradores primero
+        for admin in administrators:
+            if not admin.user.is_bot:
+                if admin.user.username:
+                    clean_username = clean_name_for_mention(admin.user.username)
+                    if f"@{clean_username}" not in mentioned_users:
+                        mentions.append(f"@{clean_username}")
+                        mentioned_users.add(f"@{clean_username}")
+                else:
+                    user_id = admin.user.id
+                    if f"user_{user_id}" not in mentioned_users:
+                        full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
+                        if admin.user.last_name:
+                            full_name += f" {clean_name_for_mention(admin.user.last_name)}"
+                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                        mentioned_users.add(f"user_{user_id}")
+        
+        # Agregar usuarios registrados que no sean administradores
+        for user_id in registered_users:
+            try:
+                # Verificar si el usuario está en el grupo
+                member = bot.get_chat_member(chat_id, user_id)
+                if member.status in ['member', 'administrator', 'creator']:
+                    if member.user.username:
+                        clean_username = clean_name_for_mention(member.user.username)
+                        if f"@{clean_username}" not in mentioned_users:
+                            mentions.append(f"@{clean_username}")
+                            mentioned_users.add(f"@{clean_username}")
+                    else:
+                        if f"user_{user_id}" not in mentioned_users:
+                            full_name = escape_markdown(member.user.first_name)
+                            if member.user.last_name:
+                                full_name += f" {escape_markdown(member.user.last_name)}"
+                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
+                            mentioned_users.add(f"user_{user_id}")
+            except Exception as e:
+                logging.error(f"Error al obtener usuario {user_id}: {e}")
+                continue
+        
+        if mentions:
+            # Crear texto de menciones seguro
+            final_text = create_safe_mention_text(clan_war_text, mentions)
+            safe_send_message(chat_id, final_text, parse_mode='Markdown')
+            
+            # Enviar mensajes directos a usuarios registrados
+            send_direct_messages_to_users("¡GUERRA DE CLANES! ¡Llamado a todas las tropas!", "/cr")
+        else:
+            safe_reply_to(message, "❌ No se pudieron obtener los miembros del grupo.")
+            
+    except Exception as e:
+        logging.error(f"Error al invitar a guerra de clanes: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
 
