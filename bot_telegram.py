@@ -19,6 +19,7 @@ import sys
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+BOT_OWNER_ID = os.getenv('BOT_OWNER_ID')
 
 if not BOT_TOKEN:
     print("❌ ERROR: BOT_TOKEN no está configurado")
@@ -30,6 +31,13 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     print("   SUPABASE_URL=https://tu-proyecto.supabase.co")
     print("   SUPABASE_KEY=tu-clave-supabase")
     exit(1)
+
+if not BOT_OWNER_ID or not BOT_OWNER_ID.isdigit():
+    print("❌ ERROR: BOT_OWNER_ID no está configurado correctamente")
+    print("💡 Configura BOT_OWNER_ID con tu ID numérico de Telegram")
+    exit(1)
+
+BOT_OWNER_ID = int(BOT_OWNER_ID)
 
 # Aplicar parche temporal para el error de Story
 def apply_story_patch():
@@ -703,6 +711,10 @@ def is_user_admin(chat_id, user_id):
         logging.error(f"❌ Error al verificar permisos de administrador: {e}")
         return False
 
+def is_bot_owner(user_id):
+    """Valida si el usuario es el dueño del bot."""
+    return user_id == BOT_OWNER_ID
+
 def reset_database():
     """Resetea todas las tablas usadas por el bot."""
     try:
@@ -759,7 +771,7 @@ Comandos principales:
 • /register - Registrarse para menciones (o responder a un mensaje para registrar a otro)
 • /unregister - Desregistrarse
 • /eliminar_usuario - [ADMIN] Eliminar usuario del registro
-• /resetdb CONFIRMAR - [ADMIN] Resetear BBDD del bot
+• /resetdb CONFIRMAR - [OWNER] Resetear BBDD del bot
 • /help - Ver ayuda completa
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
@@ -788,7 +800,7 @@ Comandos disponibles:
 • /register - Registrarse para recibir menciones (o responder a un mensaje para registrar a otro usuario)
 • /unregister - Desregistrarse de las menciones
 • /eliminar_usuario - [ADMIN] Eliminar usuario del registro de menciones
-• /resetdb CONFIRMAR - [ADMIN] Limpia toda la base de datos del bot
+• /resetdb CONFIRMAR - [OWNER] Limpia toda la base de datos del bot
 • /registered - Muestra usuarios registrados
 • /historial - Muestra historial de registros
 • /backup - Crea respaldo de la base de datos
@@ -1711,14 +1723,10 @@ def comunista_command(message):
 
 @bot.message_handler(commands=['resetdb'])
 def resetdb_command(message):
-    """Comando de administrador para resetear la base de datos del bot."""
+    """Comando exclusivo del owner para resetear la base de datos del bot."""
     try:
-        if message.chat.type not in ['group', 'supergroup']:
-            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
-            return
-
-        if not is_user_admin(message.chat.id, message.from_user.id):
-            safe_reply_to(message, "❌ Solo los administradores pueden usar este comando.")
+        if not is_bot_owner(message.from_user.id):
+            safe_reply_to(message, "❌ Solo el dueño del bot puede usar este comando.")
             return
 
         command_parts = message.text.split() if message.text else []
