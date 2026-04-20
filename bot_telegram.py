@@ -75,6 +75,13 @@ logging.basicConfig(
 # Configuración de Supabase (Base de datos en la nube)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def safe_result_data(result):
+    """Devuelve result.data como lista segura."""
+    if not result:
+        return []
+    data = getattr(result, 'data', None)
+    return data if isinstance(data, list) else []
+
 def init_database():
     """Inicializa la base de datos en Supabase (PostgreSQL en la nube)"""
     try:
@@ -84,6 +91,9 @@ def init_database():
         
         supabase.table('user_registration_log').select('id').limit(1).execute()
         logging.info("✅ Tabla user_registration_log verificada")
+
+        supabase.table('direct_message_users').select('user_id').limit(1).execute()
+        logging.info("✅ Tabla direct_message_users verificada")
         
         logging.info("✅ Base de datos Supabase inicializada correctamente")
         return True
@@ -120,7 +130,8 @@ def load_registered_users():
     """Carga los usuarios registrados desde Supabase"""
     try:
         result = supabase.table('registered_users').select('user_id').execute()
-        user_ids = [row['user_id'] for row in result.data]
+        rows = safe_result_data(result)
+        user_ids = [row.get('user_id') for row in rows if row.get('user_id') is not None]
         return set(user_ids)
     except Exception as e:
         logging.error(f"❌ Error al cargar usuarios registrados: {e}")
@@ -131,7 +142,7 @@ def add_registered_user(user_id, username=None, first_name=None, last_name=None)
     try:
         # Verificar si el usuario ya existe
         existing = supabase.table('registered_users').select('user_id').eq('user_id', user_id).execute()
-        is_new_user = len(existing.data) == 0
+        is_new_user = len(safe_result_data(existing)) == 0
         
         # Insertar o actualizar usuario
         user_data = {
@@ -166,8 +177,9 @@ def remove_registered_user(user_id):
         result = supabase.table('registered_users').delete().eq('user_id', user_id).execute()
         
         # Registrar la acción en el log
-        if user_info.data:
-            user_data = user_info.data[0]
+        user_rows = safe_result_data(user_info)
+        if user_rows:
+            user_data = user_rows[0]
             details = f"Username: {user_data.get('username')}, Nombre: {user_data.get('first_name')} {user_data.get('last_name')}"
             log_user_action(user_id, "ELIMINACION", details)
         
@@ -182,8 +194,9 @@ def get_user_info(user_id):
     try:
         result = supabase.table('registered_users').select('username, first_name, last_name, registered_at').eq('user_id', user_id).execute()
         
-        if result.data:
-            user_data = result.data[0]
+        user_rows = safe_result_data(result)
+        if user_rows:
+            user_data = user_rows[0]
             return {
                 'username': user_data.get('username'),
                 'first_name': user_data.get('first_name'),
@@ -199,7 +212,8 @@ def load_direct_message_users():
     """Carga los usuarios registrados para mensajes directos desde Supabase"""
     try:
         result = supabase.table('direct_message_users').select('user_id').execute()
-        user_ids = [row['user_id'] for row in result.data]
+        rows = safe_result_data(result)
+        user_ids = [row.get('user_id') for row in rows if row.get('user_id') is not None]
         return set(user_ids)
     except Exception as e:
         logging.error(f"❌ Error al cargar usuarios de mensajes directos: {e}")
@@ -210,7 +224,7 @@ def add_direct_message_user(user_id, username=None, first_name=None, last_name=N
     try:
         # Verificar si el usuario ya existe
         existing = supabase.table('direct_message_users').select('user_id').eq('user_id', user_id).execute()
-        is_new_user = len(existing.data) == 0
+        is_new_user = len(safe_result_data(existing)) == 0
         
         if is_new_user:
             # Insertar usuario
@@ -246,8 +260,9 @@ def remove_direct_message_user(user_id):
         result = supabase.table('direct_message_users').delete().eq('user_id', user_id).execute()
         
         # Registrar la acción en el log
-        if user_info.data:
-            user_data = user_info.data[0]
+        user_rows = safe_result_data(user_info)
+        if user_rows:
+            user_data = user_rows[0]
             details = f"Username: {user_data.get('username')}, Nombre: {user_data.get('first_name')} {user_data.get('last_name')}"
             log_user_action(user_id, "ELIMINACION_DIRECT_MESSAGE", details)
         
@@ -679,6 +694,26 @@ def safe_reply_to(message, text, parse_mode='Markdown', max_retries=5):
             return False
     return False
 
+def is_user_admin(chat_id, user_id):
+    """Valida si un usuario es administrador del chat."""
+    try:
+        chat_member = bot.get_chat_member(chat_id, user_id)
+        return chat_member.status in ['creator', 'administrator']
+    except Exception as e:
+        logging.error(f"❌ Error al verificar permisos de administrador: {e}")
+        return False
+
+def reset_database():
+    """Resetea todas las tablas usadas por el bot."""
+    try:
+        supabase.table('registered_users').delete().neq('user_id', 0).execute()
+        supabase.table('direct_message_users').delete().neq('user_id', 0).execute()
+        supabase.table('user_registration_log').delete().neq('id', 0).execute()
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error al resetear la base de datos: {e}")
+        return False
+
 # Inicializar base de datos
 if not init_database():
     logging.error("❌ No se pudo inicializar la base de datos. Saliendo...")
@@ -724,6 +759,7 @@ Comandos principales:
 • /register - Registrarse para menciones (o responder a un mensaje para registrar a otro)
 • /unregister - Desregistrarse
 • /eliminar_usuario - [ADMIN] Eliminar usuario del registro
+• /resetdb CONFIRMAR - [ADMIN] Resetear BBDD del bot
 • /help - Ver ayuda completa
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
@@ -752,6 +788,7 @@ Comandos disponibles:
 • /register - Registrarse para recibir menciones (o responder a un mensaje para registrar a otro usuario)
 • /unregister - Desregistrarse de las menciones
 • /eliminar_usuario - [ADMIN] Eliminar usuario del registro de menciones
+• /resetdb CONFIRMAR - [ADMIN] Limpia toda la base de datos del bot
 • /registered - Muestra usuarios registrados
 • /historial - Muestra historial de registros
 • /backup - Crea respaldo de la base de datos
@@ -1456,13 +1493,11 @@ def eliminar_usuario_command(message):
         
         # Verificar que el usuario que ejecuta el comando sea administrador
         try:
-            chat_member = bot.get_chat_member(chat_id, message.from_user.id)
-            if chat_member.status not in ['creator', 'administrator']:
+            if not is_user_admin(chat_id, message.from_user.id):
                 safe_reply_to(message, "❌ Solo los administradores pueden usar este comando.")
                 logging.warning(f"⚠️ Usuario {message.from_user.id} intentó usar /eliminar_usuario sin ser administrador")
                 return
         except Exception as e:
-            logging.error(f"❌ Error al verificar permisos de administrador: {e}")
             safe_reply_to(message, "❌ No se pudo verificar tus permisos de administrador.")
             return
         
@@ -1674,6 +1709,39 @@ def comunista_command(message):
         logging.error(f"Error en comando comunista: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
 
+@bot.message_handler(commands=['resetdb'])
+def resetdb_command(message):
+    """Comando de administrador para resetear la base de datos del bot."""
+    try:
+        if message.chat.type not in ['group', 'supergroup']:
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
+            return
+
+        if not is_user_admin(message.chat.id, message.from_user.id):
+            safe_reply_to(message, "❌ Solo los administradores pueden usar este comando.")
+            return
+
+        command_parts = message.text.split() if message.text else []
+        confirmation = command_parts[1].strip().upper() if len(command_parts) > 1 else ""
+        if confirmation != "CONFIRMAR":
+            safe_reply_to(
+                message,
+                "⚠️ Este comando borra todos los datos del bot.\n\nUso correcto: /resetdb CONFIRMAR",
+                parse_mode=None
+            )
+            return
+
+        if reset_database():
+            registered_users.clear()
+            direct_message_users.clear()
+            log_user_action(message.from_user.id, "RESET_DB", "Reseteó la base de datos del bot")
+            safe_reply_to(message, "✅ Base de datos reseteada correctamente.")
+        else:
+            safe_reply_to(message, "❌ No se pudo resetear la base de datos.")
+    except Exception as e:
+        logging.error(f"Error en comando resetdb: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
 @bot.message_handler(commands=['cr'])
 def clan_war_command(message):
     """Comando para invitar a todo el grupo a jugar la guerra de clanes"""
@@ -1779,7 +1847,7 @@ def start_bot_with_webhook():
             'allowed_updates': ['message']
         }
         
-        response = requests.post(webhook_url, json=webhook_data, timeout=10)
+        response = requests.post(webhook_setup_url, json=webhook_data, timeout=10)
         
         if response.status_code == 200:
             logging.info("✅ Webhook configurado correctamente")
