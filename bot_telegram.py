@@ -14,6 +14,7 @@ import re
 from bs4 import BeautifulSoup
 import pytz
 import sys
+import inspect
 
 # Configuración del bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -48,18 +49,27 @@ def apply_story_patch():
         
         # Guardar el constructor original
         original_init = Story.__init__
+        init_signature = inspect.signature(original_init)
+        accepts_chat = 'chat' in init_signature.parameters
         
         def patched_init(self, **kwargs):
-            # Remover el campo 'chat' si existe, ya que causa problemas
-            if 'chat' in kwargs:
-                logging.warning("🔧 Removiendo campo 'chat' problemático de Story")
-                del kwargs['chat']
+            # Adaptar kwargs según la versión de pyTelegramBotAPI.
+            if accepts_chat:
+                # En versiones nuevas, chat es obligatorio.
+                if 'chat' not in kwargs:
+                    kwargs['chat'] = None
+                    logging.warning("🔧 Campo 'chat' ausente en Story; se aplica valor por defecto")
+            else:
+                # En versiones antiguas, chat rompe el constructor.
+                if 'chat' in kwargs:
+                    logging.warning("🔧 Removiendo campo 'chat' no soportado en Story")
+                    del kwargs['chat']
             # Llamar al constructor original con los parámetros limpios
             return original_init(self, **kwargs)
         
         # Aplicar el parche
         Story.__init__ = patched_init
-        logging.info("✅ Parche temporal aplicado para la clase Story")
+        logging.info(f"✅ Parche Story aplicado (accepts_chat={accepts_chat})")
         
     except Exception as e:
         logging.warning(f"⚠️ No se pudo aplicar el parche de Story: {e}")
@@ -293,7 +303,9 @@ def send_direct_messages_to_users(alert_text, command_name):
         message_text += "Favor revisar el grupo para más detalles."
         
         sent_count = 0
-        for user_id in direct_message_users:
+        total_users = len(direct_message_users)
+        # Iterar sobre una copia para evitar errores al remover usuarios durante el envío.
+        for user_id in list(direct_message_users):
             try:
                 bot.send_message(user_id, message_text)
                 sent_count += 1
@@ -318,7 +330,7 @@ def send_direct_messages_to_users(alert_text, command_name):
                     # Otro tipo de error, no remover
                     logging.warning(f"⚠️ Error desconocido para usuario {user_id}: {e}")
         
-        logging.info(f"📤 Mensajes directos enviados: {sent_count}/{len(direct_message_users)}")
+        logging.info(f"📤 Mensajes directos enviados: {sent_count}/{total_users}")
         
     except Exception as e:
         logging.error(f"❌ Error al enviar mensajes directos: {e}")
