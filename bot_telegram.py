@@ -778,6 +778,7 @@ Comandos principales:
 • /allbug - Alerta de bug
 • /allerror - Alerta de error de cuota
 • /mute - [ADMIN] Silencia 5 minutos a un usuario (1 vez al día por usuario)
+• /unmute - [ADMIN] Quita el silencio a un usuario
 • /cr - ¡Guerra de Clanes! Invita a todos a jugar
 • /marcus - Mensaje especial de Marcus
 • /comunista - Envía mensaje directo al comunista
@@ -806,6 +807,7 @@ Comandos disponibles:
 • /allbug - Alerta de bug (menciona a todos)
 • /allerror - Alerta de error de cuota (menciona a todos)
 • /mute - [ADMIN] Silencia a un usuario por 5 minutos (límite: 1 vez al día por usuario)
+• /unmute - [ADMIN] Quita el mute a un usuario antes del tiempo
 • /cr - ¡Guerra de Clanes! Invita a todo el clan a jugar con mensaje ultra motivacional
 • /marcus - Mensaje especial de Marcus
 • /comunista - Envía mensaje directo al comunista
@@ -832,6 +834,9 @@ Comandos de administrador:
 • /mute - Silencia a un usuario por 5 minutos
   Uso recomendado: Responder a un mensaje + /mute
   También: /mute <ID_de_usuario>
+• /unmute - Quita el silencio de un usuario
+  Uso recomendado: Responder a un mensaje + /unmute
+  También: /unmute <ID_de_usuario>
 
 Notas importantes:
 • El bot debe ser administrador del grupo
@@ -1749,6 +1754,106 @@ def mute_user_command(message):
     except Exception as e:
         logging.error(f"Error en comando mute: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al ejecutar /mute. Verifica permisos e intenta de nuevo.")
+
+@bot.message_handler(commands=['unmute'])
+def unmute_user_command(message):
+    """Quita el silencio a un usuario (solo administradores)."""
+    try:
+        chat_id = message.chat.id
+        actor_user_id = message.from_user.id
+
+        if message.chat.type not in ['group', 'supergroup']:
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
+            return
+
+        if not is_user_admin(chat_id, actor_user_id):
+            safe_reply_to(message, "❌ Solo los administradores pueden usar /unmute.")
+            logging.warning(f"⚠️ Usuario {actor_user_id} intentó usar /unmute sin permisos")
+            return
+
+        target_user = None
+        target_user_id = None
+        if message.reply_to_message and message.reply_to_message.from_user:
+            target_user = message.reply_to_message.from_user
+            target_user_id = target_user.id
+        elif message.text and len(message.text.split()) > 1:
+            raw_target = message.text.split()[1].strip()
+            if raw_target.isdigit():
+                target_user_id = int(raw_target)
+            else:
+                safe_reply_to(
+                    message,
+                    "❌ Formato inválido. Usa respuesta al mensaje del usuario o /unmute <ID_de_usuario>."
+                )
+                return
+        else:
+            safe_reply_to(
+                message,
+                "❌ Debes responder a un mensaje del usuario o usar /unmute <ID_de_usuario>."
+            )
+            return
+
+        if target_user_id == actor_user_id:
+            safe_reply_to(message, "❌ No necesitas usar /unmute contigo mismo.")
+            return
+
+        bot_member = bot.get_chat_member(chat_id, bot.get_me().id)
+        if bot_member.status not in ['administrator', 'creator']:
+            safe_reply_to(message, "❌ Necesito ser administrador para poder quitar mute.")
+            return
+
+        can_restrict = getattr(bot_member, 'can_restrict_members', False)
+        if bot_member.status == 'administrator' and not can_restrict:
+            safe_reply_to(message, "❌ No tengo el permiso de restringir miembros en este grupo.")
+            return
+
+        # Restaurar permisos estándar del grupo para el usuario.
+        default_permissions = types.ChatPermissions(
+            can_send_messages=True,
+            can_send_audios=True,
+            can_send_documents=True,
+            can_send_photos=True,
+            can_send_videos=True,
+            can_send_video_notes=True,
+            can_send_voice_notes=True,
+            can_send_polls=True,
+            can_send_other_messages=True,
+            can_add_web_page_previews=True,
+            can_change_info=False,
+            can_invite_users=True,
+            can_pin_messages=False,
+            can_manage_topics=False
+        )
+
+        bot.restrict_chat_member(
+            chat_id=chat_id,
+            user_id=target_user_id,
+            permissions=default_permissions
+        )
+
+        display_name = "Usuario"
+        if target_user and target_user.first_name:
+            display_name = target_user.first_name
+        else:
+            try:
+                member_info = bot.get_chat_member(chat_id, target_user_id)
+                if getattr(member_info, 'user', None) and member_info.user.first_name:
+                    display_name = member_info.user.first_name
+            except Exception:
+                pass
+
+        safe_reply_to(
+            message,
+            f"🔊 {display_name} fue desmuteado manualmente por un administrador."
+        )
+        log_user_action(
+            actor_user_id,
+            "ADMIN_UNMUTE",
+            f"Quitó mute a usuario {target_user_id} en chat {chat_id}"
+        )
+    except Exception as e:
+        logging.error(f"Error en comando unmute: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al ejecutar /unmute. Verifica permisos e intenta de nuevo.")
 
 @bot.message_handler(commands=['nba'])
 def nba_command(message):
