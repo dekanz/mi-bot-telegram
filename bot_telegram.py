@@ -749,6 +749,10 @@ registered_users = load_registered_users()
 # Cargar usuarios de mensajes directos al iniciar
 direct_message_users = load_direct_message_users()
 
+# Registro en memoria para limitar /mute a 1 vez por día por usuario objetivo.
+# Estructura: {(chat_id, target_user_id): datetime_utc_ultimo_mute}
+mute_usage_tracker = {}
+
 # Verificar conectividad antes de iniciar
 if not check_network_connectivity():
     logging.error("❌ No se pudo verificar la conectividad de red. El bot puede no funcionar correctamente.")
@@ -773,6 +777,7 @@ Comandos principales:
 • /all - Menciona a todos
 • /allbug - Alerta de bug
 • /allerror - Alerta de error de cuota
+• /mute - [ADMIN] Silencia 5 minutos a un usuario (1 vez al día por usuario)
 • /cr - ¡Guerra de Clanes! Invita a todos a jugar
 • /marcus - Mensaje especial de Marcus
 • /comunista - Envía mensaje directo al comunista
@@ -800,6 +805,7 @@ Comandos disponibles:
 • /all - Menciona a todos los miembros del grupo
 • /allbug - Alerta de bug (menciona a todos)
 • /allerror - Alerta de error de cuota (menciona a todos)
+• /mute - [ADMIN] Silencia a un usuario por 5 minutos (límite: 1 vez al día por usuario)
 • /cr - ¡Guerra de Clanes! Invita a todo el clan a jugar con mensaje ultra motivacional
 • /marcus - Mensaje especial de Marcus
 • /comunista - Envía mensaje directo al comunista
@@ -823,6 +829,9 @@ Comandos de administrador:
 • /eliminar_usuario - Elimina un usuario del registro de menciones
   Uso: Responder a un mensaje + /eliminar_usuario
   O bien: /eliminar_usuario <ID_de_usuario>
+• /mute - Silencia a un usuario por 5 minutos
+  Uso recomendado: Responder a un mensaje + /mute
+  También: /mute <ID_de_usuario>
 
 Notas importantes:
 • El bot debe ser administrador del grupo
@@ -1619,6 +1628,127 @@ def eliminar_usuario_command(message):
     except Exception as e:
         logging.error(f"Error en comando eliminar_usuario: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+@bot.message_handler(commands=['mute'])
+def mute_user_command(message):
+    """Silencia a un usuario por 5 minutos (solo administradores)."""
+    try:
+        chat_id = message.chat.id
+        actor_user_id = message.from_user.id
+
+        if message.chat.type not in ['group', 'supergroup']:
+            safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
+            return
+
+        if not is_user_admin(chat_id, actor_user_id):
+            safe_reply_to(message, "❌ Solo los administradores pueden usar /mute.")
+            logging.warning(f"⚠️ Usuario {actor_user_id} intentó usar /mute sin permisos")
+            return
+
+        # Determinar usuario objetivo: reply (recomendado) o ID por argumento.
+        target_user = None
+        target_user_id = None
+        if message.reply_to_message and message.reply_to_message.from_user:
+            target_user = message.reply_to_message.from_user
+            target_user_id = target_user.id
+        elif message.text and len(message.text.split()) > 1:
+            raw_target = message.text.split()[1].strip()
+            if raw_target.isdigit():
+                target_user_id = int(raw_target)
+            else:
+                safe_reply_to(
+                    message,
+                    "❌ Formato inválido. Usa respuesta al mensaje del usuario o /mute <ID_de_usuario>."
+                )
+                return
+        else:
+            safe_reply_to(
+                message,
+                "❌ Debes responder a un mensaje del usuario o usar /mute <ID_de_usuario>."
+            )
+            return
+
+        # Impedir que se mutee a sí mismo.
+        if target_user_id == actor_user_id:
+            safe_reply_to(message, "❌ No puedes mutearte a ti mismo.")
+            return
+
+        # Impedir mutear al dueño del grupo o administradores.
+        target_member = bot.get_chat_member(chat_id, target_user_id)
+        if target_member.status in ['creator', 'administrator']:
+            safe_reply_to(message, "❌ No puedes mutear a otro administrador del grupo.")
+            return
+
+        # Verificar que el bot tenga permisos para restringir miembros.
+        bot_member = bot.get_chat_member(chat_id, bot.get_me().id)
+        if bot_member.status not in ['administrator', 'creator']:
+            safe_reply_to(message, "❌ Necesito ser administrador para poder mutear usuarios.")
+            return
+
+        can_restrict = getattr(bot_member, 'can_restrict_members', False)
+        if bot_member.status == 'administrator' and not can_restrict:
+            safe_reply_to(message, "❌ No tengo el permiso de restringir miembros en este grupo.")
+            return
+
+        now_utc = datetime.utcnow()
+        cooldown_key = (chat_id, target_user_id)
+        last_mute_at = mute_usage_tracker.get(cooldown_key)
+        if last_mute_at and (now_utc - last_mute_at) < timedelta(days=1):
+            remaining = timedelta(days=1) - (now_utc - last_mute_at)
+            remaining_hours = int(remaining.total_seconds() // 3600)
+            remaining_minutes = int((remaining.total_seconds() % 3600) // 60)
+            safe_reply_to(
+                message,
+                f"⏳ Ese usuario ya fue muteado hoy. Intenta de nuevo en {remaining_hours}h {remaining_minutes}m."
+            )
+            return
+
+        mute_until = now_utc + timedelta(minutes=5)
+        permissions = types.ChatPermissions(
+            can_send_messages=False,
+            can_send_audios=False,
+            can_send_documents=False,
+            can_send_photos=False,
+            can_send_videos=False,
+            can_send_video_notes=False,
+            can_send_voice_notes=False,
+            can_send_polls=False,
+            can_send_other_messages=False,
+            can_add_web_page_previews=False,
+            can_change_info=False,
+            can_invite_users=False,
+            can_pin_messages=False,
+            can_manage_topics=False
+        )
+
+        bot.restrict_chat_member(
+            chat_id=chat_id,
+            user_id=target_user_id,
+            permissions=permissions,
+            until_date=mute_until
+        )
+
+        mute_usage_tracker[cooldown_key] = now_utc
+
+        display_name = "Usuario"
+        if target_user and target_user.first_name:
+            display_name = target_user.first_name
+        elif getattr(target_member, 'user', None) and target_member.user.first_name:
+            display_name = target_member.user.first_name
+
+        safe_reply_to(
+            message,
+            f"🔇 {display_name} fue muteado por 5 minutos.\n"
+            f"📌 Regla activa: este usuario no puede ser muteado de nuevo por 24 horas."
+        )
+        log_user_action(
+            actor_user_id,
+            "ADMIN_MUTE",
+            f"Muteó a usuario {target_user_id} por 5 minutos en chat {chat_id}"
+        )
+    except Exception as e:
+        logging.error(f"Error en comando mute: {e}")
+        safe_reply_to(message, "❌ Ocurrió un error al ejecutar /mute. Verifica permisos e intenta de nuevo.")
 
 @bot.message_handler(commands=['nba'])
 def nba_command(message):
