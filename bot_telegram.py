@@ -100,6 +100,15 @@ def safe_result_data(result):
     data = getattr(result, 'data', None)
     return data if isinstance(data, list) else []
 
+def normalize_user_id(value):
+    """Convierte IDs de usuario a int de forma segura."""
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 def init_database():
     """Inicializa la base de datos en Supabase (PostgreSQL en la nube)"""
     try:
@@ -149,7 +158,11 @@ def load_registered_users():
     try:
         result = supabase.table('registered_users').select('user_id').execute()
         rows = safe_result_data(result)
-        user_ids = [row.get('user_id') for row in rows if row.get('user_id') is not None]
+        user_ids = []
+        for row in rows:
+            normalized_id = normalize_user_id(row.get('user_id'))
+            if normalized_id is not None:
+                user_ids.append(normalized_id)
         return set(user_ids)
     except Exception as e:
         logging.error(f"❌ Error al cargar usuarios registrados: {e}")
@@ -158,6 +171,11 @@ def load_registered_users():
 def add_registered_user(user_id, username=None, first_name=None, last_name=None):
     """Agrega un usuario a la base de datos usando Supabase"""
     try:
+        user_id = normalize_user_id(user_id)
+        if user_id is None:
+            logging.error("❌ add_registered_user recibió user_id inválido")
+            return False
+
         # Verificar si el usuario ya existe
         existing = supabase.table('registered_users').select('user_id').eq('user_id', user_id).execute()
         is_new_user = len(safe_result_data(existing)) == 0
@@ -188,6 +206,11 @@ def add_registered_user(user_id, username=None, first_name=None, last_name=None)
 def remove_registered_user(user_id):
     """Remueve un usuario de la base de datos usando Supabase"""
     try:
+        user_id = normalize_user_id(user_id)
+        if user_id is None:
+            logging.error("❌ remove_registered_user recibió user_id inválido")
+            return False
+
         # Obtener información del usuario antes de eliminarlo
         user_info = supabase.table('registered_users').select('username, first_name, last_name').eq('user_id', user_id).execute()
         
@@ -210,6 +233,10 @@ def remove_registered_user(user_id):
 def get_user_info(user_id):
     """Obtiene información de un usuario registrado desde Supabase"""
     try:
+        user_id = normalize_user_id(user_id)
+        if user_id is None:
+            return None
+
         result = supabase.table('registered_users').select('username, first_name, last_name, registered_at').eq('user_id', user_id).execute()
         
         user_rows = safe_result_data(result)
@@ -231,7 +258,11 @@ def load_direct_message_users():
     try:
         result = supabase.table('direct_message_users').select('user_id').execute()
         rows = safe_result_data(result)
-        user_ids = [row.get('user_id') for row in rows if row.get('user_id') is not None]
+        user_ids = []
+        for row in rows:
+            normalized_id = normalize_user_id(row.get('user_id'))
+            if normalized_id is not None:
+                user_ids.append(normalized_id)
         return set(user_ids)
     except Exception as e:
         logging.error(f"❌ Error al cargar usuarios de mensajes directos: {e}")
@@ -240,6 +271,11 @@ def load_direct_message_users():
 def add_direct_message_user(user_id, username=None, first_name=None, last_name=None):
     """Agrega un usuario para recibir mensajes directos usando Supabase"""
     try:
+        user_id = normalize_user_id(user_id)
+        if user_id is None:
+            logging.error("❌ add_direct_message_user recibió user_id inválido")
+            return False
+
         # Verificar si el usuario ya existe
         existing = supabase.table('direct_message_users').select('user_id').eq('user_id', user_id).execute()
         is_new_user = len(safe_result_data(existing)) == 0
@@ -271,6 +307,11 @@ def add_direct_message_user(user_id, username=None, first_name=None, last_name=N
 def remove_direct_message_user(user_id):
     """Remueve un usuario de los mensajes directos usando Supabase"""
     try:
+        user_id = normalize_user_id(user_id)
+        if user_id is None:
+            logging.error("❌ remove_direct_message_user recibió user_id inválido")
+            return False
+
         # Obtener información del usuario antes de eliminarlo
         user_info = supabase.table('direct_message_users').select('username, first_name, last_name').eq('user_id', user_id).execute()
         
