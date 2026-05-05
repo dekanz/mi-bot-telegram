@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 import pytz
 import sys
 import inspect
+from telebot.apihelper import ApiTelegramException
 
 # Configuración del bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -672,6 +673,25 @@ def build_user_mention(user):
     mention_value = f"[{full_name}](tg://user?id={user_id})"
     return mention_key, mention_value
 
+def build_registered_user_mention(user_id):
+    """Construye mención por ID usando la base registrada, sin depender del estado del chat."""
+    normalized_id = normalize_user_id(user_id)
+    if normalized_id is None:
+        return None, None
+
+    user_info = get_user_info(normalized_id) or {}
+    first_name = user_info.get('first_name') or "Usuario"
+    last_name = user_info.get('last_name')
+
+    full_name = clean_name_for_mention(first_name)
+    if last_name:
+        full_name += f" {clean_name_for_mention(last_name)}"
+
+    full_name = escape_markdown(full_name)
+    mention_key = f"user_{normalized_id}"
+    mention_value = f"[{full_name}](tg://user?id={normalized_id})"
+    return mention_key, mention_value
+
 def validate_markdown_text(text):
     """Valida si un texto es seguro para Markdown"""
     if not text:
@@ -1024,6 +1044,10 @@ def mention_all(message):
             safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
         
+        # Refrescar registros desde DB para evitar desincronización en memoria
+        global registered_users
+        registered_users = load_registered_users()
+
         # Obtener información del chat
         chat_member_count = bot.get_chat_member_count(chat_id)
         
@@ -1046,16 +1070,13 @@ def mention_all(message):
                     mentions.append(mention_value)
                     mentioned_users.add(mention_key)
         
-        # Agregar usuarios registrados que no sean administradores
+        # Agregar usuarios registrados directamente desde DB
         for user_id in registered_users:
             try:
-                # Verificar si el usuario está en el grupo
-                member = bot.get_chat_member(chat_id, user_id)
-                if member.status in ['member', 'administrator', 'creator']:
-                    mention_key, mention_value = build_user_mention(member.user)
-                    if mention_key and mention_key not in mentioned_users:
-                        mentions.append(mention_value)
-                        mentioned_users.add(mention_key)
+                mention_key, mention_value = build_registered_user_mention(user_id)
+                if mention_key and mention_key not in mentioned_users:
+                    mentions.append(mention_value)
+                    mentioned_users.add(mention_key)
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
                 continue
@@ -1084,6 +1105,10 @@ def mention_all_bug(message):
             safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
         
+        # Refrescar registros desde DB para evitar desincronización en memoria
+        global registered_users
+        registered_users = load_registered_users()
+
         # Obtener información del chat
         chat_member_count = bot.get_chat_member_count(chat_id)
         
@@ -1107,16 +1132,13 @@ def mention_all_bug(message):
                     mentions.append(mention_value)
                     mentioned_users.add(mention_key)
         
-        # Agregar usuarios registrados que no sean administradores
+        # Agregar usuarios registrados directamente desde DB
         for user_id in registered_users:
             try:
-                # Verificar si el usuario está en el grupo
-                member = bot.get_chat_member(chat_id, user_id)
-                if member.status in ['member', 'administrator', 'creator']:
-                    mention_key, mention_value = build_user_mention(member.user)
-                    if mention_key and mention_key not in mentioned_users:
-                        mentions.append(mention_value)
-                        mentioned_users.add(mention_key)
+                mention_key, mention_value = build_registered_user_mention(user_id)
+                if mention_key and mention_key not in mentioned_users:
+                    mentions.append(mention_value)
+                    mentioned_users.add(mention_key)
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
                 continue
@@ -1145,6 +1167,10 @@ def mention_all_error(message):
             safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
         
+        # Refrescar registros desde DB para evitar desincronización en memoria
+        global registered_users
+        registered_users = load_registered_users()
+
         # Obtener información del chat
         chat_member_count = bot.get_chat_member_count(chat_id)
         
@@ -1169,16 +1195,13 @@ def mention_all_error(message):
                     mentions.append(mention_value)
                     mentioned_users.add(mention_key)
         
-        # Agregar usuarios registrados que no sean administradores
+        # Agregar usuarios registrados directamente desde DB
         for user_id in registered_users:
             try:
-                # Verificar si el usuario está en el grupo
-                member = bot.get_chat_member(chat_id, user_id)
-                if member.status in ['member', 'administrator', 'creator']:
-                    mention_key, mention_value = build_user_mention(member.user)
-                    if mention_key and mention_key not in mentioned_users:
-                        mentions.append(mention_value)
-                        mentioned_users.add(mention_key)
+                mention_key, mention_value = build_registered_user_mention(user_id)
+                if mention_key and mention_key not in mentioned_users:
+                    mentions.append(mention_value)
+                    mentioned_users.add(mention_key)
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
                 continue
@@ -2116,9 +2139,9 @@ def start_bot_with_webhook():
         return False
 
 def start_bot_with_retry():
-    """Inicia el bot con reintentos automáticos en caso de error de conexión"""
-    max_restart_attempts = 5
+    """Inicia el bot con reintentos automáticos y recuperación ante conflictos."""
     restart_delay = 30  # 30 segundos entre intentos
+    attempt = 0
     
     # Delay inicial para evitar conflictos
     logging.info("⏳ Esperando 30 segundos para evitar conflictos...")
@@ -2131,15 +2154,16 @@ def start_bot_with_retry():
     
     logging.info("🚀 Iniciando bot con polling...")
     
-    for attempt in range(max_restart_attempts):
+    while True:
+        attempt += 1
         try:
             # Limpieza básica antes de cada intento
             if attempt > 0:
-                logging.info(f"🧹 Limpieza básica antes del intento {attempt + 1}...")
+                logging.info(f"🧹 Limpieza básica antes del intento {attempt}...")
                 clear_webhook()
                 time.sleep(10)
             
-            logging.info(f"🚀 Iniciando Bot de Menciones (intento {attempt + 1}/{max_restart_attempts})...")
+            logging.info(f"🚀 Iniciando Bot de Menciones (intento {attempt})...")
             logging.info(f"Token configurado: {'✅' if BOT_TOKEN else '❌'}")
             logging.info(f"Usuarios registrados: {len(registered_users)}")
             
@@ -2153,65 +2177,41 @@ def start_bot_with_retry():
             )
             
         except (ConnectionError, Timeout, NewConnectionError, MaxRetryError) as e:
-            logging.error(f"❌ Error de conexión en intento {attempt + 1}: {e}")
-            if attempt < max_restart_attempts - 1:
-                logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
-                time.sleep(restart_delay)
-                # Verificar conectividad antes de reintentar
-                if check_network_connectivity():
-                    logging.info("✅ Conectividad restaurada, reintentando...")
-                else:
-                    logging.warning("⚠️ Conectividad aún no disponible")
+            logging.error(f"❌ Error de conexión en intento {attempt}: {e}")
+            logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
+            time.sleep(restart_delay)
+            if check_network_connectivity():
+                logging.info("✅ Conectividad restaurada, reintentando...")
             else:
-                logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
-                break
-                
-        except Exception as e:
+                logging.warning("⚠️ Conectividad aún no disponible")
+
+        except ApiTelegramException as e:
             error_str = str(e)
             if "409" in error_str and "Conflict" in error_str:
-                logging.error(f"❌ Conflicto de instancias en intento {attempt + 1}: {e}")
-                if attempt < max_restart_attempts - 1:
-                    # Delay progresivo para conflictos de instancias
-                    conflict_delay = min(restart_delay * (2 ** min(attempt, 4)), 300)  # Máximo 5 minutos
-                    logging.info(f"🔄 Esperando {conflict_delay} segundos para resolver conflicto...")
-                    time.sleep(conflict_delay)
-                    
-                    # Limpieza forzada antes de reintentar
-                    logging.info("🧹 Limpieza forzada antes de reintentar...")
-                    force_cleanup_all_instances()
-                else:
-                    logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
-                    break
-            elif "Story.__init__() got an unexpected keyword argument 'chat'" in error_str:
-                logging.error(f"❌ Error de compatibilidad con Story en intento {attempt + 1}: {e}")
-                logging.info("🔧 Este es un error conocido de compatibilidad con la API de Telegram")
-                logging.info("🔄 Reintentando con configuración mejorada...")
-                if attempt < max_restart_attempts - 1:
-                    time.sleep(restart_delay)
-                else:
-                    logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
-                    break
+                logging.error(f"❌ Conflicto 409 detectado en intento {attempt}: {e}")
+                conflict_delay = min(restart_delay * (2 ** min(attempt, 4)), 300)  # Máximo 5 minutos
+                logging.info(f"🔄 Esperando {conflict_delay} segundos para resolver conflicto...")
+                time.sleep(conflict_delay)
+                logging.info("🧹 Limpieza forzada antes de reintentar...")
+                force_cleanup_all_instances()
             else:
-                logging.error(f"❌ Error inesperado en intento {attempt + 1}: {e}")
-                if attempt < max_restart_attempts - 1:
-                    logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
-                    time.sleep(restart_delay)
-                else:
-                    logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
-                    break
+                logging.error(f"❌ Error de Telegram API en intento {attempt}: {e}")
+                logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
+                time.sleep(restart_delay)
                 
         except KeyboardInterrupt:
             logging.info("\n🛑 Bot detenido por el usuario")
             break
             
         except Exception as e:
-            logging.error(f"❌ Error inesperado: {e}")
-            if attempt < max_restart_attempts - 1:
-                logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
-                time.sleep(restart_delay)
+            error_str = str(e)
+            if "Story.__init__() got an unexpected keyword argument 'chat'" in error_str:
+                logging.error(f"❌ Error de compatibilidad Story en intento {attempt}: {e}")
+                logging.info("🔄 Reintentando con parche aplicado...")
             else:
-                logging.error("❌ Máximo número de reintentos alcanzado. Saliendo...")
-                break
+                logging.error(f"❌ Error inesperado en intento {attempt}: {e}")
+            logging.info(f"🔄 Reintentando en {restart_delay} segundos...")
+            time.sleep(restart_delay)
 
 def start_web_server():
     """Inicia un servidor web simple para Render"""
