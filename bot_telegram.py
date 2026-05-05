@@ -656,6 +656,22 @@ def create_safe_mention_text(mention_text, mentions):
         # Fallback: enviar sin menciones
         return mention_text + "\n(Error al procesar menciones)"
 
+def build_user_mention(user):
+    """Construye una mención robusta por user_id para evitar fallos con @username."""
+    user_id = normalize_user_id(getattr(user, 'id', None))
+    if user_id is None:
+        return None, None
+
+    full_name = clean_name_for_mention(getattr(user, 'first_name', None) or "Usuario")
+    last_name = getattr(user, 'last_name', None)
+    if last_name:
+        full_name += f" {clean_name_for_mention(last_name)}"
+
+    full_name = escape_markdown(full_name)
+    mention_key = f"user_{user_id}"
+    mention_value = f"[{full_name}](tg://user?id={user_id})"
+    return mention_key, mention_value
+
 def validate_markdown_text(text):
     """Valida si un texto es seguro para Markdown"""
     if not text:
@@ -931,25 +947,19 @@ def register_user(message):
                 log_user_action(message.from_user.id, "REGISTER_OTHER", f"Registró a {first_name} ({user_id})")
             else:
                 safe_reply_to(message, "❌ Error al registrar al usuario. Intenta de nuevo más tarde.")
-        elif message.text and len(message.text.split()) > 1:
-            # Verificar si hay una mención en el texto
-            text_parts = message.text.split()
-            if len(text_parts) > 1 and text_parts[1].startswith('@'):
-                # Extraer el username de la mención
-                target_username = text_parts[1][1:]  # Quitar el @
-                
-                # Buscar el usuario en el chat
-                if message.chat.type in ['group', 'supergroup']:
-                    # En grupos, necesitamos obtener la información del usuario
-                    safe_reply_to(message, f"❌ No puedo registrar a @{target_username} directamente. Usa 'Responder a un mensaje' + /register en su lugar.")
-                    return
-                else:
-                    safe_reply_to(message, "❌ Este comando solo funciona en grupos. Usa 'Responder a un mensaje' + /register en su lugar.")
-                    return
-            else:
-                safe_reply_to(message, "❌ Formato incorrecto. Usa: /register @usuario o responde a un mensaje + /register")
-                return
         else:
+            # Si viene con argumentos, solo tratamos el caso especial de "@usuario".
+            # Cualquier otro argumento se ignora y se registra al emisor.
+            if message.text and len(message.text.split()) > 1:
+                text_parts = message.text.split()
+                if len(text_parts) > 1 and text_parts[1].startswith('@'):
+                    target_username = text_parts[1][1:]  # Quitar el @
+                    if message.chat.type in ['group', 'supergroup']:
+                        safe_reply_to(message, f"❌ No puedo registrar a @{target_username} directamente. Usa 'Responder a un mensaje' + /register en su lugar.")
+                    else:
+                        safe_reply_to(message, "❌ Este comando solo funciona en grupos. Usa 'Responder a un mensaje' + /register en su lugar.")
+                    return
+
             # Registrar al usuario que envió el comando
             user_id = message.from_user.id
             username = message.from_user.username
@@ -1031,19 +1041,10 @@ def mention_all(message):
         # Agregar administradores primero
         for admin in administrators:
             if not admin.user.is_bot:
-                if admin.user.username:
-                    clean_username = clean_name_for_mention(admin.user.username)
-                    if f"@{clean_username}" not in mentioned_users:
-                        mentions.append(f"@{clean_username}")
-                        mentioned_users.add(f"@{clean_username}")
-                else:
-                    user_id = admin.user.id
-                    if f"user_{user_id}" not in mentioned_users:
-                        full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
-                        if admin.user.last_name:
-                            full_name += f" {clean_name_for_mention(admin.user.last_name)}"
-                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
-                        mentioned_users.add(f"user_{user_id}")
+                mention_key, mention_value = build_user_mention(admin.user)
+                if mention_key and mention_key not in mentioned_users:
+                    mentions.append(mention_value)
+                    mentioned_users.add(mention_key)
         
         # Agregar usuarios registrados que no sean administradores
         for user_id in registered_users:
@@ -1051,18 +1052,10 @@ def mention_all(message):
                 # Verificar si el usuario está en el grupo
                 member = bot.get_chat_member(chat_id, user_id)
                 if member.status in ['member', 'administrator', 'creator']:
-                    if member.user.username:
-                        clean_username = clean_name_for_mention(member.user.username)
-                        if f"@{clean_username}" not in mentioned_users:
-                            mentions.append(f"@{clean_username}")
-                            mentioned_users.add(f"@{clean_username}")
-                    else:
-                        if f"user_{user_id}" not in mentioned_users:
-                            full_name = escape_markdown(member.user.first_name)
-                            if member.user.last_name:
-                                full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
-                            mentioned_users.add(f"user_{user_id}")
+                    mention_key, mention_value = build_user_mention(member.user)
+                    if mention_key and mention_key not in mentioned_users:
+                        mentions.append(mention_value)
+                        mentioned_users.add(mention_key)
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
                 continue
@@ -1109,19 +1102,10 @@ def mention_all_bug(message):
         # Agregar administradores primero
         for admin in administrators:
             if not admin.user.is_bot:
-                if admin.user.username:
-                    clean_username = clean_name_for_mention(admin.user.username)
-                    if f"@{clean_username}" not in mentioned_users:
-                        mentions.append(f"@{clean_username}")
-                        mentioned_users.add(f"@{clean_username}")
-                else:
-                    user_id = admin.user.id
-                    if f"user_{user_id}" not in mentioned_users:
-                        full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
-                        if admin.user.last_name:
-                            full_name += f" {clean_name_for_mention(admin.user.last_name)}"
-                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
-                        mentioned_users.add(f"user_{user_id}")
+                mention_key, mention_value = build_user_mention(admin.user)
+                if mention_key and mention_key not in mentioned_users:
+                    mentions.append(mention_value)
+                    mentioned_users.add(mention_key)
         
         # Agregar usuarios registrados que no sean administradores
         for user_id in registered_users:
@@ -1129,18 +1113,10 @@ def mention_all_bug(message):
                 # Verificar si el usuario está en el grupo
                 member = bot.get_chat_member(chat_id, user_id)
                 if member.status in ['member', 'administrator', 'creator']:
-                    if member.user.username:
-                        clean_username = clean_name_for_mention(member.user.username)
-                        if f"@{clean_username}" not in mentioned_users:
-                            mentions.append(f"@{clean_username}")
-                            mentioned_users.add(f"@{clean_username}")
-                    else:
-                        if f"user_{user_id}" not in mentioned_users:
-                            full_name = escape_markdown(member.user.first_name)
-                            if member.user.last_name:
-                                full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
-                            mentioned_users.add(f"user_{user_id}")
+                    mention_key, mention_value = build_user_mention(member.user)
+                    if mention_key and mention_key not in mentioned_users:
+                        mentions.append(mention_value)
+                        mentioned_users.add(mention_key)
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
                 continue
@@ -1188,19 +1164,10 @@ def mention_all_error(message):
         # Agregar administradores primero
         for admin in administrators:
             if not admin.user.is_bot:
-                if admin.user.username:
-                    clean_username = clean_name_for_mention(admin.user.username)
-                    if f"@{clean_username}" not in mentioned_users:
-                        mentions.append(f"@{clean_username}")
-                        mentioned_users.add(f"@{clean_username}")
-                else:
-                    user_id = admin.user.id
-                    if f"user_{user_id}" not in mentioned_users:
-                        full_name = clean_name_for_mention(admin.user.first_name or "Usuario")
-                        if admin.user.last_name:
-                            full_name += f" {clean_name_for_mention(admin.user.last_name)}"
-                        mentions.append(f"[{full_name}](tg://user?id={user_id})")
-                        mentioned_users.add(f"user_{user_id}")
+                mention_key, mention_value = build_user_mention(admin.user)
+                if mention_key and mention_key not in mentioned_users:
+                    mentions.append(mention_value)
+                    mentioned_users.add(mention_key)
         
         # Agregar usuarios registrados que no sean administradores
         for user_id in registered_users:
@@ -1208,18 +1175,10 @@ def mention_all_error(message):
                 # Verificar si el usuario está en el grupo
                 member = bot.get_chat_member(chat_id, user_id)
                 if member.status in ['member', 'administrator', 'creator']:
-                    if member.user.username:
-                        clean_username = clean_name_for_mention(member.user.username)
-                        if f"@{clean_username}" not in mentioned_users:
-                            mentions.append(f"@{clean_username}")
-                            mentioned_users.add(f"@{clean_username}")
-                    else:
-                        if f"user_{user_id}" not in mentioned_users:
-                            full_name = escape_markdown(member.user.first_name)
-                            if member.user.last_name:
-                                full_name += f" {escape_markdown(member.user.last_name)}"
-                            mentions.append(f"[{full_name}](tg://user?id={user_id})")
-                            mentioned_users.add(f"user_{user_id}")
+                    mention_key, mention_value = build_user_mention(member.user)
+                    if mention_key and mention_key not in mentioned_users:
+                        mentions.append(mention_value)
+                        mentioned_users.add(mention_key)
             except Exception as e:
                 logging.error(f"Error al obtener usuario {user_id}: {e}")
                 continue
