@@ -5,7 +5,8 @@ import json
 import time
 import requests
 import socket
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import random
 from telebot import types
 from requests.exceptions import ConnectionError, Timeout, RequestException
 from urllib3.exceptions import NewConnectionError, MaxRetryError
@@ -810,6 +811,14 @@ def reset_database():
         supabase.table('registered_users').delete().neq('user_id', 0).execute()
         supabase.table('direct_message_users').delete().neq('user_id', 0).execute()
         supabase.table('user_registration_log').delete().neq('id', 0).execute()
+        # Minijuego /grow (si las tablas existen)
+        try:
+            min_bigint = -9223372036854775808
+            supabase.table('growth_pvp_pending').delete().gte('id', 0).execute()
+            supabase.table('growth_dotd').delete().gte('chat_id', min_bigint).execute()
+            supabase.table('growth_chat_user').delete().gte('chat_id', min_bigint).execute()
+        except Exception as ge:
+            logging.warning(f"⚠️ No se pudieron vaciar tablas del minijuego (puede ser normal): {ge}")
         return True
     except Exception as e:
         logging.error(f"❌ Error al resetear la base de datos: {e}")
@@ -829,6 +838,147 @@ direct_message_users = load_direct_message_users()
 # Registro en memoria para limitar /mute a 1 vez por día por usuario objetivo.
 # Estructura: {(chat_id, target_user_id): datetime_utc_ultimo_mute}
 mute_usage_tracker = {}
+
+# Minijuego /grow (requiere tablas en Supabase; véase SUPABASE_SETUP.md)
+GROWTH_TABLES_READY = False
+DOTD_BONUS_CM = 5
+PVP_CHALLENGE_TTL_MIN = 10
+
+
+def verify_growth_tables():
+    """Comprueba que existan las tablas opcionales del minijuego."""
+    global GROWTH_TABLES_READY
+    try:
+        supabase.table('growth_chat_user').select('chat_id').limit(1).execute()
+        supabase.table('growth_dotd').select('chat_id').limit(1).execute()
+        supabase.table('growth_pvp_pending').select('id').limit(1).execute()
+        GROWTH_TABLES_READY = True
+        logging.info("✅ Tablas del minijuego de crecimiento verificadas.")
+    except Exception as e:
+        GROWTH_TABLES_READY = False
+        logging.warning(
+            "⚠️ Minijuego /grow no disponible — crea las tablas growth_* en Supabase (SUPABASE_SETUP.md): %s",
+            e,
+        )
+
+
+def growth_tables_missing_reply(message):
+    safe_reply_to(
+        message,
+        "⚠️ El minijuego no está configurado en el servidor.\n\n"
+        "Pide al administrador que cree las tablas `growth_chat_user`, `growth_dotd` y "
+        "`growth_pvp_pending` en Supabase (instrucciones en SUPABASE_SETUP.md).",
+        parse_mode=None,
+    )
+
+
+def growth_parse_iso_ts(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    s = str(value).replace('Z', '+00:00')
+    return datetime.fromisoformat(s).astimezone(timezone.utc)
+
+
+def growth_fetch_row(chat_id, user_id):
+    try:
+        result = supabase.table('growth_chat_user').select('*').eq('chat_id', chat_id).eq('user_id', user_id).execute()
+        rows = safe_result_data(result)
+        return rows[0] if rows else None
+    except Exception as e:
+        logging.error(f"growth_fetch_row: {e}")
+        return None
+
+
+def growth_upsert_row(chat_id, user_id, cm, last_grow_at=None, username=None, first_name=None):
+    payload = {'chat_id': chat_id, 'user_id': user_id, 'cm': int(cm)}
+    if last_grow_at is not None:
+        if isinstance(last_grow_at, datetime):
+            payload['last_grow_at'] = last_grow_at.isoformat()
+        else:
+            payload['last_grow_at'] = last_grow_at
+    if username is not None:
+        payload['username'] = username
+    if first_name is not None:
+        payload['first_name'] = first_name
+    supabase.table('growth_chat_user').upsert(payload, on_conflict='chat_id,user_id').execute()
+
+
+def growth_can_grow_today(last_grow_at):
+    if not last_grow_at:
+        return True
+    last_dt = growth_parse_iso_ts(last_grow_at)
+    if not last_dt:
+        return True
+    return last_dt.date() < datetime.now(timezone.utc).date()
+
+
+def growth_cleanup_stale_pvp():
+    if not GROWTH_TABLES_READY:
+        return
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=PVP_CHALLENGE_TTL_MIN)).isoformat()
+    try:
+        supabase.table('growth_pvp_pending').delete().lt('created_at', cutoff).execute()
+    except Exception as e:
+        logging.warning(f"growth_cleanup_stale_pvp: {e}")
+
+
+def growth_maybe_assign_dotd(chat_id):
+    """Una vez al día UTC por chat elige ganador aleatorio entre quien /grow lo últimos 7 días."""
+    if not GROWTH_TABLES_READY:
+        return None
+    today = datetime.now(timezone.utc).date().isoformat()
+    try:
+        existing = supabase.table('growth_dotd').select('user_id').eq('chat_id', chat_id).eq('prize_date', today).execute()
+        if safe_result_data(existing):
+            return None
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        all_rows = supabase.table('growth_chat_user').select('user_id,last_grow_at').eq('chat_id', chat_id).execute()
+        eligible = []
+        for r in safe_result_data(all_rows):
+            la = r.get('last_grow_at')
+            if not la:
+                continue
+            la_dt = growth_parse_iso_ts(la)
+            if la_dt and la_dt >= cutoff:
+                eligible.append(int(r['user_id']))
+        if not eligible:
+            return None
+
+        winner_id = random.choice(eligible)
+        winner_row = growth_fetch_row(chat_id, winner_id)
+        if not winner_row:
+            return None
+
+        new_cm = max(0, int(winner_row['cm']) + DOTD_BONUS_CM)
+        growth_upsert_row(
+            chat_id,
+            winner_id,
+            new_cm,
+            last_grow_at=winner_row.get('last_grow_at'),
+            username=winner_row.get('username'),
+            first_name=winner_row.get('first_name'),
+        )
+        supabase.table('growth_dotd').upsert(
+            {'chat_id': chat_id, 'prize_date': today, 'user_id': winner_id, 'bonus_cm': DOTD_BONUS_CM},
+            on_conflict='chat_id,prize_date',
+        ).execute()
+
+        fname = winner_row.get('first_name') or ''
+        handle = winner_row.get('username')
+        mention = f"@{handle}" if handle else fname or str(winner_id)
+        return mention, DOTD_BONUS_CM
+    except Exception as e:
+        logging.error(f"growth_maybe_assign_dotd: {e}")
+        return None
+
+
+verify_growth_tables()
 
 # Verificar conectividad antes de iniciar
 if not check_network_connectivity():
@@ -867,6 +1017,9 @@ Comandos principales:
 • /unregister - Desregistrarse
 • /eliminar_usuario - [ADMIN] Eliminar usuario del registro
 • /resetdb CONFIRMAR - [OWNER] Resetear BBDD del bot
+• /grow - Minijuego: crece de −5 a +20 cm (una vez por día y por chat)
+• /top - Ranking del minijuego en este chat
+• /pvp - Reto entre jugadores apostando cm (uso en /help)
 • /help - Ver ayuda completa
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
@@ -902,7 +1055,24 @@ Comandos disponibles:
 • /historial - Muestra historial de registros
 • /backup - Crea respaldo de la base de datos
 • /count - Muestra estadísticas del grupo
+• /grow - Minijuego de crecimiento (una vez al día por chat; efecto −5 … +20 cm)
+• /top - Clasificación del minijuego en este chat
+• /pvp - Apuesta cm contra otro jugador (véase texto del minijuego abajo)
 • /help - Muestra esta ayuda
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+Minijuego (por chat)
+
+¿Quieres tener el pene más grande del mundo? Seguro que sí.
+Solo usá /grow una vez al día en cada grupo en el que estés para sumar centímetros y llegar arriba del ranking.
+
+Cada día /grow mueve tu medida entre −5 y +20 cm. Usá /top para ver quiénes llevan las «armas» más grandes de este chat.
+
+Además hay una elección diaria del Pene del Día en cada chat: ese título da al dueño algunos cm extra de bonificación. Solo entran jugadores activos que hayan hecho crecer su pepino con /grow al menos una vez en la última semana.
+
+Si querés estirarlo aún más y te gusta el riesgo, peleá con tus amigos: apostá con /pvp. Contestá el mensaje de tu rival escribiendo, por ejemplo, /pvp 10; la otra persona acepta con /pvp aceptar. El ganador se lleva los cm apostados; el perdedor los pierde. Así de simple.
+
+Comandos: /grow · /top · /pvp · /pvp aceptar
 
 Comandos de administrador:
 • /eliminar_usuario - Elimina un usuario del registro de menciones
@@ -2019,6 +2189,290 @@ def resetdb_command(message):
     except Exception as e:
         logging.error(f"Error en comando resetdb: {e}")
         safe_reply_to(message, "❌ Ocurrió un error al procesar la solicitud.")
+
+
+@bot.message_handler(commands=['grow'])
+def growth_grow_command(message):
+    """Una tirada diaria UTC por usuario y chat; efecto −5 … +20 cm."""
+    try:
+        if not GROWTH_TABLES_READY:
+            growth_tables_missing_reply(message)
+            return
+        if message.chat.type not in ('group', 'supergroup'):
+            safe_reply_to(message, "❌ /grow solo funciona en grupos.", parse_mode=None)
+            return
+
+        chat_id = message.chat.id
+        uid = message.from_user.id
+        u = message.from_user
+        row = growth_fetch_row(chat_id, uid)
+
+        if row and not growth_can_grow_today(row.get('last_grow_at')):
+            safe_reply_to(message, "⏳ Ya usaste /grow hoy en este chat (calendario UTC). Vuelve mañana.", parse_mode=None)
+            return
+
+        delta = random.randint(-5, 20)
+        base_cm = int(row['cm']) if row else 0
+        new_cm = max(0, base_cm + delta)
+        now = datetime.now(timezone.utc)
+
+        growth_upsert_row(
+            chat_id,
+            uid,
+            new_cm,
+            last_grow_at=now,
+            username=u.username,
+            first_name=u.first_name or '',
+        )
+
+        sign = "+" if delta >= 0 else ""
+        body = (
+            f"📏 ¡Hola! Hoy cambiaste {sign}{delta} cm → ahora tienes {new_cm} cm.\n\n"
+            f"Ranking: /top"
+        )
+        safe_reply_to(message, body, parse_mode=None)
+
+        dotd = growth_maybe_assign_dotd(chat_id)
+        if dotd:
+            mention, bonus = dotd
+            announce = (
+                f"🏆 ¡Pene del Día!\n\n"
+                f"Hoy ({datetime.now(timezone.utc).strftime('%d-%m-%Y')} UTC) el título va para "
+                f"{mention} (+{bonus} cm de bonificación)."
+            )
+            safe_send_message(chat_id, announce, parse_mode=None)
+
+        log_user_action(uid, "GROW_GROW", f"chat={chat_id} delta={delta} cm={new_cm}")
+    except Exception as e:
+        logging.error(f"Error en comando grow: {e}")
+        safe_reply_to(message, "❌ No se pudo procesar /grow.", parse_mode=None)
+
+
+@bot.message_handler(commands=['top'])
+def growth_top_command(message):
+    """Ranking por cm dentro del chat actual."""
+    try:
+        if not GROWTH_TABLES_READY:
+            growth_tables_missing_reply(message)
+            return
+        if message.chat.type not in ('group', 'supergroup'):
+            safe_reply_to(message, "❌ /top solo funciona en grupos.", parse_mode=None)
+            return
+
+        chat_id = message.chat.id
+        result = supabase.table('growth_chat_user').select('*').eq('chat_id', chat_id).order('cm', desc=True).limit(20).execute()
+        rows = safe_result_data(result)
+        rows = [r for r in rows if int(r.get('cm') or 0) > 0]
+
+        if not rows:
+            safe_reply_to(message, "📊 Nadie registra cm todavía en este grupo. ¡Sé el primero con /grow!", parse_mode=None)
+            return
+
+        lines = ["🏆 Ranking de medidas — este grupo\n"]
+        medals = ["🥇", "🥈", "🥉"]
+        for i, r in enumerate(rows):
+            med = medals[i] if i < 3 else f"{i + 1}."
+            fname = r.get('first_name') or 'Sin nombre'
+            handle = r.get('username')
+            label = f"@{handle}" if handle else fname
+            lines.append(f"{med} {label} — {int(r['cm'])} cm")
+        safe_reply_to(message, "\n".join(lines), parse_mode=None)
+    except Exception as e:
+        logging.error(f"Error en comando top: {e}")
+        safe_reply_to(message, "❌ No se pudo cargar el ranking.", parse_mode=None)
+
+
+@bot.message_handler(commands=['pvp'])
+def growth_pvp_command(message):
+    """Apuesta cm contra otro usuario: iniciar contestando mensaje /pvp N; rival /pvp aceptar."""
+    try:
+        if not GROWTH_TABLES_READY:
+            growth_tables_missing_reply(message)
+            return
+        if message.chat.type not in ('group', 'supergroup'):
+            safe_reply_to(message, "❌ /pvp solo funciona en grupos.", parse_mode=None)
+            return
+
+        growth_cleanup_stale_pvp()
+        chat_id = message.chat.id
+        parts = (message.text or '').split()
+        token = parts[1].lower() if len(parts) >= 2 else ''
+
+        if token in ('aceptar', 'acepta', 'sí', 'si', 'accept', 'yes', 'ok'):
+            # Aceptación: debe haber una retificación pendiente hacia este usuario
+            pend = (
+                supabase.table('growth_pvp_pending')
+                .select('*')
+                .eq('chat_id', chat_id)
+                .eq('target_id', message.from_user.id)
+                .order('created_at', desc=True)
+                .limit(1)
+                .execute()
+            )
+            pr = safe_result_data(pend)
+            if not pr:
+                safe_reply_to(
+                    message,
+                    "❌ No hay ningún /pvp pendiente para ti (o caducó; los retos duran "
+                    f"{PVP_CHALLENGE_TTL_MIN} minutos).",
+                    parse_mode=None,
+                )
+                return
+
+            pending = pr[0]
+            ch_id = int(pending['challenger_id'])
+            tg_id = int(pending['target_id'])
+            bet = int(pending['bet_cm'])
+            row_id = pending['id']
+
+            ch_row = growth_fetch_row(chat_id, ch_id)
+            tg_row = growth_fetch_row(chat_id, tg_id)
+            ch_cm = int(ch_row['cm']) if ch_row else 0
+            tg_cm = int(tg_row['cm']) if tg_row else 0
+
+            if ch_cm < bet or tg_cm < bet:
+                supabase.table('growth_pvp_pending').delete().eq('id', row_id).execute()
+                safe_reply_to(
+                    message,
+                    "❌ Uno de los jugadores ya no tiene cm suficientes para esta apuesta. Reto cancelado.",
+                    parse_mode=None,
+                )
+                return
+
+            supabase.table('growth_pvp_pending').delete().eq('id', row_id).execute()
+
+            challenger_wins = random.choice((True, False))
+            winner_id = ch_id if challenger_wins else tg_id
+            loser_id = tg_id if challenger_wins else ch_id
+
+            w_row = growth_fetch_row(chat_id, winner_id)
+            l_row = growth_fetch_row(chat_id, loser_id)
+            new_w = max(0, int(w_row['cm']) + bet if w_row else bet)
+            new_l = max(0, int(l_row['cm']) - bet if l_row else 0)
+
+            growth_upsert_row(
+                chat_id,
+                winner_id,
+                new_w,
+                last_grow_at=w_row.get('last_grow_at') if w_row else None,
+                username=w_row.get('username') if w_row else None,
+                first_name=w_row.get('first_name') if w_row else None,
+            )
+            growth_upsert_row(
+                chat_id,
+                loser_id,
+                new_l,
+                last_grow_at=l_row.get('last_grow_at') if l_row else None,
+                username=l_row.get('username') if l_row else None,
+                first_name=l_row.get('first_name') if l_row else None,
+            )
+
+            w_name = w_row.get('first_name') if w_row else ''
+            l_name = l_row.get('first_name') if l_row else ''
+            w_hand = (w_row or {}).get('username')
+            l_hand = (l_row or {}).get('username')
+            w_label = f"@{w_hand}" if w_hand else (w_name or str(winner_id))
+            l_label = f"@{l_hand}" if l_hand else (l_name or str(loser_id))
+
+            msg = (
+                f"⚔️ ¡Duelo resuelto!\n\n"
+                f"🏆 Ganó {w_label} (+{bet} cm → total {new_w} cm).\n"
+                f"😵 Perdió {l_label} (−{bet} cm → total {new_l} cm)."
+            )
+            safe_reply_to(message, msg, parse_mode=None)
+            log_user_action(
+                message.from_user.id,
+                'GROW_PVP',
+                f"chat={chat_id} winner={winner_id} loser={loser_id} bet={bet}",
+            )
+            return
+
+        # Iniciar reto: contestando a un mensaje
+        replied = message.reply_to_message
+        if not replied or not getattr(replied, 'from_user', None):
+            safe_reply_to(
+                message,
+                "📌 Contestá el mensaje de tu rival con:\n`/pvp <cm>`\n\nEjemplo: respondés a su mensaje y escribís `/pvp 7`.\n"
+                "Luego esa persona debe escribir en el mismo grupo:\n`/pvp aceptar`",
+                parse_mode=None,
+            )
+            return
+
+        target = replied.from_user
+        if getattr(target, 'is_bot', False):
+            safe_reply_to(message, "❌ No podés retar a un bot.", parse_mode=None)
+            return
+        if target.id == message.from_user.id:
+            safe_reply_to(message, "❌ Elegí a otra persona, no vos mismo.", parse_mode=None)
+            return
+
+        bet_str = parts[1] if len(parts) >= 2 else ''
+        try:
+            bet = int(bet_str)
+        except ValueError:
+            safe_reply_to(
+                message,
+                "📌 Para apostar poné cantidad en cm después del comando contestando el mensaje: `/pvp 5`",
+                parse_mode=None,
+            )
+            return
+
+        if bet < 1:
+            safe_reply_to(message, "❌ La apuesta mínima es 1 cm.", parse_mode=None)
+            return
+
+        ch_row = growth_fetch_row(chat_id, message.from_user.id)
+        tg_row = growth_fetch_row(chat_id, target.id)
+        ch_cm = int(ch_row['cm']) if ch_row else 0
+        tg_cm = int(tg_row['cm']) if tg_row else 0
+
+        if ch_cm < bet or tg_cm < bet:
+            safe_reply_to(
+                message,
+                "❌ Los dos necesitan tener al menos esa cantidad en cm para apostar. Usá primero /grow.",
+                parse_mode=None,
+            )
+            return
+
+        # Un solo duelo pendiente por par (opcional cleanup)
+        existing = (
+            supabase.table('growth_pvp_pending')
+            .select('id')
+            .eq('chat_id', chat_id)
+            .eq('challenger_id', message.from_user.id)
+            .eq('target_id', target.id)
+            .execute()
+        )
+        for ex in safe_result_data(existing):
+            supabase.table('growth_pvp_pending').delete().eq('id', ex['id']).execute()
+
+        supabase.table('growth_pvp_pending').insert(
+            {
+                'chat_id': chat_id,
+                'challenger_id': message.from_user.id,
+                'target_id': target.id,
+                'bet_cm': bet,
+            }
+        ).execute()
+
+        targ_handle = target.username
+        targ_label = f"@{targ_handle}" if targ_handle else (target.first_name or target.id)
+
+        challenger_label = message.from_user.first_name or message.from_user.id
+        safe_reply_to(
+            message,
+            (
+                f"⚔️ {challenger_label} reta a {targ_label} apostando {bet} cm.\n\n"
+                f"{targ_label}: escribí /pvp aceptar en este grupo dentro de los próximos "
+                f"{PVP_CHALLENGE_TTL_MIN} minutos (si no, el reto caduca). "
+                f"El ganador se lleva {bet} cm del perdedor."
+            ),
+            parse_mode=None,
+        )
+    except Exception as e:
+        logging.error(f"Error en comando pvp: {e}")
+        safe_reply_to(message, "❌ No se pudo procesar /pvp.", parse_mode=None)
+
 
 @bot.message_handler(commands=['cr'])
 def clan_war_command(message):
