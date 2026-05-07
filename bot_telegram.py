@@ -865,6 +865,7 @@ mute_usage_tracker = {}
 GROWTH_TABLES_READY = False
 DOTD_BONUS_CM = 5
 PVP_CHALLENGE_TTL_HOURS = 24
+GROWTH_CHILE_TZ = pytz.timezone('America/Santiago')
 
 
 def verify_growth_tables():
@@ -931,12 +932,15 @@ def growth_upsert_row(chat_id, user_id, cm, last_grow_at=None, username=None, fi
 
 
 def growth_can_grow_today(last_grow_at):
+    """Una tirada por día civil en Chile (medianoche hora de Santiago)."""
     if not last_grow_at:
         return True
     last_dt = growth_parse_iso_ts(last_grow_at)
     if not last_dt:
         return True
-    return last_dt.date() < datetime.now(timezone.utc).date()
+    last_chile_date = last_dt.astimezone(GROWTH_CHILE_TZ).date()
+    today_chile = datetime.now(GROWTH_CHILE_TZ).date()
+    return last_chile_date < today_chile
 
 
 def growth_cleanup_stale_pvp():
@@ -950,16 +954,17 @@ def growth_cleanup_stale_pvp():
 
 
 def growth_maybe_assign_dotd(chat_id):
-    """Una vez al día UTC por chat elige ganador aleatorio entre quien /grow lo últimos 7 días."""
+    """Una vez por día civil en Chile por chat elige ganador aleatorio entre quien /grow últimos 7 días."""
     if not GROWTH_TABLES_READY:
         return None
-    today = datetime.now(timezone.utc).date().isoformat()
+    now_cl = datetime.now(GROWTH_CHILE_TZ)
+    today = now_cl.date().isoformat()
     try:
         existing = supabase.table('growth_dotd').select('user_id').eq('chat_id', chat_id).eq('prize_date', today).execute()
         if safe_result_data(existing):
             return None
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        cutoff = (now_cl - timedelta(days=7)).astimezone(timezone.utc)
         all_rows = supabase.table('growth_chat_user').select('user_id,last_grow_at').eq('chat_id', chat_id).execute()
         eligible = []
         for r in safe_result_data(all_rows):
@@ -1039,7 +1044,7 @@ Comandos principales:
 • /unregister - Desregistrarse
 • /eliminar_usuario - [ADMIN] Eliminar usuario del registro
 • /resetdb CONFIRMAR - [OWNER] Resetear BBDD del bot
-• /grow - Minijuego: crece de −5 a +20 cm (una vez por día y por chat)
+• /grow - Minijuego: crece de −5 a +20 cm (una vez por día Chile y por chat)
 • /top - Ranking del minijuego en este chat
 • /pvp - Reto apostando cm (24 h para aceptar; aviso por DM con /mensaje)
 • /help - Ver ayuda completa
@@ -1077,7 +1082,7 @@ Comandos disponibles:
 • /historial - Muestra historial de registros
 • /backup - Crea respaldo de la base de datos
 • /count - Muestra estadísticas del grupo
-• /grow - Minijuego de crecimiento (una vez al día por chat; efecto −5 … +20 cm)
+• /grow - Minijuego de crecimiento (una vez al día según Chile; efecto −5 … +20 cm)
 • /top - Clasificación del minijuego en este chat
 • /pvp - Apuesta cm contra otro jugador (24 h; DM al retado si usa /mensaje)
 • /help - Muestra esta ayuda
@@ -1086,7 +1091,7 @@ Comandos disponibles:
 Minijuego (por chat)
 
 ¿Quieres tener el pene más grande del mundo? Seguro que sí.
-Solo usa /grow una vez al día en cada grupo en el que estés para sumar centímetros y llegar arriba del ranking.
+Solo usa /grow una vez al día en cada grupo en el que estés para sumar centímetros y llegar arriba del ranking (el día se renueva a medianoche, hora de Chile).
 
 Cada día /grow mueve tu medida entre −5 y +20 cm. Usa /top para ver quiénes llevan las «armas» más grandes de este chat.
 
@@ -2216,7 +2221,7 @@ def resetdb_command(message):
 
 @bot.message_handler(commands=['grow'])
 def growth_grow_command(message):
-    """Una tirada diaria UTC por usuario y chat; efecto −5 … +20 cm."""
+    """Una tirada por día civil Chile por usuario y chat; efecto −5 … +20 cm."""
     try:
         if not GROWTH_TABLES_READY:
             growth_tables_missing_reply(message)
@@ -2231,7 +2236,11 @@ def growth_grow_command(message):
         row = growth_fetch_row(chat_id, uid)
 
         if row and not growth_can_grow_today(row.get('last_grow_at')):
-            safe_reply_to(message, "⏳ Ya usaste /grow hoy en este chat (calendario UTC). Vuelve mañana.", parse_mode=None)
+            safe_reply_to(
+                message,
+                "⏳ Ya usaste /grow hoy en este chat (siguiente tirada después de medianoche, hora de Chile).",
+                parse_mode=None,
+            )
             return
 
         delta = random.randint(-5, 20)
@@ -2258,9 +2267,10 @@ def growth_grow_command(message):
         dotd = growth_maybe_assign_dotd(chat_id)
         if dotd:
             mention, bonus = dotd
+            ch_now = datetime.now(GROWTH_CHILE_TZ)
             announce = (
                 f"🏆 ¡Pene del Día!\n\n"
-                f"Hoy ({datetime.now(timezone.utc).strftime('%d-%m-%Y')} UTC) el título va para "
+                f"Hoy ({ch_now.strftime('%d-%m-%Y')}, Chile) el título va para "
                 f"{mention} (+{bonus} cm de bonificación)."
             )
             safe_send_message(chat_id, announce, parse_mode=None)
