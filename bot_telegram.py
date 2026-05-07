@@ -378,6 +378,28 @@ def send_direct_messages_to_users(alert_text, command_name):
     except Exception as e:
         logging.error(f"❌ Error al enviar mensajes directos: {e}")
 
+
+def send_pvp_challenge_dm(target_user_id, challenger_display, chat_title, bet_cm):
+    """Avisa por DM del reto /pvp solo si el usuario está en direct_message_users (Supabase/mensaje)."""
+    if target_user_id not in direct_message_users:
+        return False
+    text = (
+        "⚔️ Te retaron a un /pvp\n\n"
+        f"Retador/a: {challenger_display}\n"
+        f"Grupo: {chat_title}\n"
+        f"Apuesta: {bet_cm} cm\n\n"
+        "Tienes 24 horas para ir al mismo grupo y escribir ahí:\n"
+        "/pvp aceptar"
+    )
+    try:
+        bot.send_message(target_user_id, text, parse_mode=None)
+        logging.info(f"✅ DM de reto /pvp enviado a usuario {target_user_id}")
+        return True
+    except Exception as e:
+        logging.warning(f"No se pudo enviar DM de /pvp a {target_user_id}: {e}")
+        return False
+
+
 def search_nba_season_start():
     """Busca la fecha de inicio de la temporada NBA 2025-26"""
     try:
@@ -842,7 +864,7 @@ mute_usage_tracker = {}
 # Minijuego /grow (requiere tablas en Supabase; véase SUPABASE_SETUP.md)
 GROWTH_TABLES_READY = False
 DOTD_BONUS_CM = 5
-PVP_CHALLENGE_TTL_MIN = 10
+PVP_CHALLENGE_TTL_HOURS = 24
 
 
 def verify_growth_tables():
@@ -920,7 +942,7 @@ def growth_can_grow_today(last_grow_at):
 def growth_cleanup_stale_pvp():
     if not GROWTH_TABLES_READY:
         return
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=PVP_CHALLENGE_TTL_MIN)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=PVP_CHALLENGE_TTL_HOURS)).isoformat()
     try:
         supabase.table('growth_pvp_pending').delete().lt('created_at', cutoff).execute()
     except Exception as e:
@@ -1019,7 +1041,7 @@ Comandos principales:
 • /resetdb CONFIRMAR - [OWNER] Resetear BBDD del bot
 • /grow - Minijuego: crece de −5 a +20 cm (una vez por día y por chat)
 • /top - Ranking del minijuego en este chat
-• /pvp - Reto entre jugadores apostando cm (uso en /help)
+• /pvp - Reto apostando cm (24 h para aceptar; aviso por DM con /mensaje)
 • /help - Ver ayuda completa
 
 ¡Agrégame a un grupo y hazme administrador para empezar!
@@ -1057,20 +1079,21 @@ Comandos disponibles:
 • /count - Muestra estadísticas del grupo
 • /grow - Minijuego de crecimiento (una vez al día por chat; efecto −5 … +20 cm)
 • /top - Clasificación del minijuego en este chat
-• /pvp - Apuesta cm contra otro jugador (véase texto del minijuego abajo)
+• /pvp - Apuesta cm contra otro jugador (24 h; DM al retado si usa /mensaje)
 • /help - Muestra esta ayuda
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 Minijuego (por chat)
 
 ¿Quieres tener el pene más grande del mundo? Seguro que sí.
-Solo usá /grow una vez al día en cada grupo en el que estés para sumar centímetros y llegar arriba del ranking.
+Solo usa /grow una vez al día en cada grupo en el que estés para sumar centímetros y llegar arriba del ranking.
 
-Cada día /grow mueve tu medida entre −5 y +20 cm. Usá /top para ver quiénes llevan las «armas» más grandes de este chat.
+Cada día /grow mueve tu medida entre −5 y +20 cm. Usa /top para ver quiénes llevan las «armas» más grandes de este chat.
 
 Además hay una elección diaria del Pene del Día en cada chat: ese título da al dueño algunos cm extra de bonificación. Solo entran jugadores activos que hayan hecho crecer su pepino con /grow al menos una vez en la última semana.
 
-Si querés estirarlo aún más y te gusta el riesgo, peleá con tus amigos: apostá con /pvp. Contestá el mensaje de tu rival escribiendo, por ejemplo, /pvp 10; la otra persona acepta con /pvp aceptar. El ganador se lleva los cm apostados; el perdedor los pierde. Así de simple.
+Si quieres estirarlo aún más y te gusta el riesgo, pelea con tus amigos y apuesta con /pvp. Responde al mensaje de tu rival con, por ejemplo, /pvp 10; el retado debe escribir en el grupo /pvp aceptar dentro de las siguientes 24 horas. El ganador se lleva los cm apostados; el perdedor los pierde. Así de simple.
+Si el retado tiene /mensaje activo, el bot le avisa del reto por DM.
 
 Comandos: /grow · /top · /pvp · /pvp aceptar
 
@@ -2284,7 +2307,7 @@ def growth_top_command(message):
 
 @bot.message_handler(commands=['pvp'])
 def growth_pvp_command(message):
-    """Apuesta cm contra otro usuario: iniciar contestando mensaje /pvp N; rival /pvp aceptar."""
+    """Apuesta cm contra otro usuario: responder mensaje con /pvp N; rival /pvp aceptar (24 h). DM si /mensaje."""
     try:
         if not GROWTH_TABLES_READY:
             growth_tables_missing_reply(message)
@@ -2313,8 +2336,8 @@ def growth_pvp_command(message):
             if not pr:
                 safe_reply_to(
                     message,
-                    "❌ No hay ningún /pvp pendiente para ti (o caducó; los retos duran "
-                    f"{PVP_CHALLENGE_TTL_MIN} minutos).",
+                    "❌ No hay ningún /pvp pendiente para ti (o caducó; cada reto dura "
+                    f"{PVP_CHALLENGE_TTL_HOURS} horas).",
                     parse_mode=None,
                 )
                 return
@@ -2392,7 +2415,8 @@ def growth_pvp_command(message):
         if not replied or not getattr(replied, 'from_user', None):
             safe_reply_to(
                 message,
-                "📌 Contestá el mensaje de tu rival con:\n`/pvp <cm>`\n\nEjemplo: respondés a su mensaje y escribís `/pvp 7`.\n"
+                "📌 Responde el mensaje de tu rival con:\n`/pvp <cm>`\n\n"
+                "Ejemplo: respondes su mensaje y escribes `/pvp 7`.\n"
                 "Luego esa persona debe escribir en el mismo grupo:\n`/pvp aceptar`",
                 parse_mode=None,
             )
@@ -2400,10 +2424,10 @@ def growth_pvp_command(message):
 
         target = replied.from_user
         if getattr(target, 'is_bot', False):
-            safe_reply_to(message, "❌ No podés retar a un bot.", parse_mode=None)
+            safe_reply_to(message, "❌ No puedes retar a un bot.", parse_mode=None)
             return
         if target.id == message.from_user.id:
-            safe_reply_to(message, "❌ Elegí a otra persona, no vos mismo.", parse_mode=None)
+            safe_reply_to(message, "❌ Elige a otra persona, no a ti mismo.", parse_mode=None)
             return
 
         bet_str = parts[1] if len(parts) >= 2 else ''
@@ -2412,7 +2436,7 @@ def growth_pvp_command(message):
         except ValueError:
             safe_reply_to(
                 message,
-                "📌 Para apostar poné cantidad en cm después del comando contestando el mensaje: `/pvp 5`",
+                "📌 Para apostar, escribe la cantidad en cm después del comando al responder el mensaje: `/pvp 5`",
                 parse_mode=None,
             )
             return
@@ -2429,7 +2453,7 @@ def growth_pvp_command(message):
         if ch_cm < bet or tg_cm < bet:
             safe_reply_to(
                 message,
-                "❌ Los dos necesitan tener al menos esa cantidad en cm para apostar. Usá primero /grow.",
+                "❌ Los dos necesitan tener al menos esa cantidad en cm para apostar. Usa primero /grow.",
                 parse_mode=None,
             )
             return
@@ -2458,17 +2482,27 @@ def growth_pvp_command(message):
         targ_handle = target.username
         targ_label = f"@{targ_handle}" if targ_handle else (target.first_name or target.id)
 
-        challenger_label = message.from_user.first_name or message.from_user.id
-        safe_reply_to(
-            message,
-            (
-                f"⚔️ {challenger_label} reta a {targ_label} apostando {bet} cm.\n\n"
-                f"{targ_label}: escribí /pvp aceptar en este grupo dentro de los próximos "
-                f"{PVP_CHALLENGE_TTL_MIN} minutos (si no, el reto caduca). "
-                f"El ganador se lleva {bet} cm del perdedor."
-            ),
-            parse_mode=None,
+        challenger_label = message.from_user.first_name or message.from_user.username or message.from_user.id
+        try:
+            chat_info = bot.get_chat(chat_id)
+            chat_title = getattr(chat_info, 'title', None) or 'Grupo'
+        except Exception:
+            chat_title = 'Grupo'
+
+        dm_ok = send_pvp_challenge_dm(target.id, challenger_label, chat_title, bet)
+
+        reply_body = (
+            f"⚔️ {challenger_label} reta a {targ_label} apostando {bet} cm.\n\n"
+            f"{targ_label}: escribe /pvp aceptar en este grupo dentro de las próximas "
+            f"{PVP_CHALLENGE_TTL_HOURS} horas (si no, el reto caduca).\n"
+            f"El ganador se lleva {bet} cm del perdedor."
         )
+        if dm_ok:
+            reply_body += "\n\n📩 Le avisé por DM al retado (tiene /mensaje activo)."
+        else:
+            reply_body += "\n\n💡 El retado puede usar /mensaje en el grupo para recibir avisos de retos por DM."
+
+        safe_reply_to(message, reply_body, parse_mode=None)
     except Exception as e:
         logging.error(f"Error en comando pvp: {e}")
         safe_reply_to(message, "❌ No se pudo procesar /pvp.", parse_mode=None)
@@ -2497,7 +2531,7 @@ def clan_war_command(message):
         clan_war_text += "🏰 NUESTRA MISIÓN: Destruir las torres enemigas y ganar la guerra 🏰\n\n"
         
         clan_war_text += "⚡ Usa tus mejores MAZOS y ataques más devastadores\n"
-        clan_war_text += "💎 Los trofeos del clan dependen de cada uno de vosotros\n"
+        clan_war_text += "💎 Los trofeos del clan dependen de cada uno de ustedes\n"
         clan_war_text += "🎯 Cada ataque cuenta, cada torre destruida nos acerca a la victoria\n"
         clan_war_text += "🏆 Trabajemos juntos para ganar esta guerra\n\n"
         
