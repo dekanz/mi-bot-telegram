@@ -2307,7 +2307,8 @@ def growth_top_command(message):
             med = medals[i] if i < 3 else f"{i + 1}."
             fname = r.get('first_name') or 'Sin nombre'
             handle = r.get('username')
-            label = f"@{handle}" if handle else fname
+            # En /top mostramos solo nombre visible, sin generar menciones.
+            label = fname.strip() if str(fname).strip() else (str(handle).strip() if handle else 'Sin nombre')
             lines.append(f"{med} {label} — {int(r['cm'])} cm")
         safe_reply_to(message, "\n".join(lines), parse_mode=None)
     except Exception as e:
