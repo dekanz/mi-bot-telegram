@@ -42,6 +42,9 @@ if not BOT_OWNER_ID or not BOT_OWNER_ID.isdigit():
 
 BOT_OWNER_ID = int(BOT_OWNER_ID)
 
+# Usuario restringido de comandos de mención masiva (/all, /allbug, /allerror)
+MARCUS_USER_ID = 8247598136
+
 # Aplicar parche temporal para el error de Story
 def apply_story_patch():
     """Aplica un parche temporal para el error de compatibilidad con Story"""
@@ -254,6 +257,11 @@ def get_user_info(user_id):
     except Exception as e:
         logging.error(f"❌ Error al obtener información del usuario {user_id}: {e}")
         return None
+
+def is_restricted_from_mention_commands(user_id):
+    """True si el usuario no puede ejecutar /all, /allbug ni /allerror."""
+    normalized = normalize_user_id(user_id)
+    return normalized == MARCUS_USER_ID
 
 def load_direct_message_users():
     """Carga los usuarios registrados para mensajes directos desde Supabase"""
@@ -857,6 +865,8 @@ registered_users = load_registered_users()
 # Cargar usuarios de mensajes directos al iniciar
 direct_message_users = load_direct_message_users()
 
+logging.info(f"🔒 Comandos /all, /allbug y /allerror restringidos para Marcus (ID {MARCUS_USER_ID})")
+
 # Registro en memoria para limitar /mute a 1 vez por día por usuario objetivo.
 # Estructura: {(chat_id, target_user_id): datetime_utc_ultimo_mute}
 mute_usage_tracker = {}
@@ -1241,6 +1251,11 @@ def mention_all(message):
         if message.chat.type not in ['group', 'supergroup']:
             safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
             return
+
+        if is_restricted_from_mention_commands(message.from_user.id):
+            safe_reply_to(message, "🚫 No tienes permiso para usar este comando.")
+            log_user_action(message.from_user.id, "BLOQUEO_COMANDO_MENCION", "Intentó usar /all")
+            return
         
         # Refrescar registros desde DB para evitar desincronización en memoria
         global registered_users
@@ -1301,6 +1316,11 @@ def mention_all_bug(message):
         
         if message.chat.type not in ['group', 'supergroup']:
             safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
+            return
+
+        if is_restricted_from_mention_commands(message.from_user.id):
+            safe_reply_to(message, "🚫 No tienes permiso para usar este comando.")
+            log_user_action(message.from_user.id, "BLOQUEO_COMANDO_MENCION", "Intentó usar /allbug")
             return
         
         # Refrescar registros desde DB para evitar desincronización en memoria
@@ -1363,6 +1383,11 @@ def mention_all_error(message):
         
         if message.chat.type not in ['group', 'supergroup']:
             safe_reply_to(message, "❌ Este comando solo funciona en grupos.")
+            return
+
+        if is_restricted_from_mention_commands(message.from_user.id):
+            safe_reply_to(message, "🚫 No tienes permiso para usar este comando.")
+            log_user_action(message.from_user.id, "BLOQUEO_COMANDO_MENCION", "Intentó usar /allerror")
             return
         
         # Refrescar registros desde DB para evitar desincronización en memoria
