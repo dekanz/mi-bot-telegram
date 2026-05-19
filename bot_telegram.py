@@ -1056,6 +1056,7 @@ Comandos principales:
 • /resetdb CONFIRMAR - [OWNER] Resetear BBDD del bot
 • /grow - Minijuego: crece de −5 a +20 cm (una vez por día Chile y por chat)
 • /top - Ranking del minijuego en este chat
+• /give - Regala cm a otro jugador (responder mensaje + /give N)
 • /pvp - Reto apostando cm (24 h para aceptar; aviso por DM con /mensaje)
 • /help - Ver ayuda completa
 
@@ -1094,6 +1095,7 @@ Comandos disponibles:
 • /count - Muestra estadísticas del grupo
 • /grow - Minijuego de crecimiento (una vez al día según Chile; efecto −5 … +20 cm)
 • /top - Clasificación del minijuego en este chat
+• /give - Regala cm a otro jugador (responder su mensaje + /give N)
 • /pvp - Apuesta cm contra otro jugador (24 h; DM al retado si usa /mensaje)
 • /help - Muestra esta ayuda
 
@@ -1107,10 +1109,12 @@ Cada día /grow mueve tu medida entre −5 y +20 cm. Usa /top para ver quiénes 
 
 Además hay una elección diaria del Pene del Día en cada chat: ese título da al dueño algunos cm extra de bonificación. Solo entran jugadores activos que hayan hecho crecer su pepino con /grow al menos una vez en la última semana.
 
+Si quieres regalar cm a alguien, responde su mensaje con /give seguido de la cantidad (ejemplo: /give 100). Tú pierdes esos cm y la otra persona los suma.
+
 Si quieres estirarlo aún más y te gusta el riesgo, pelea con tus amigos y apuesta con /pvp. Responde al mensaje de tu rival con, por ejemplo, /pvp 10; el retado debe escribir en el grupo /pvp aceptar dentro de las siguientes 24 horas. El ganador se lleva los cm apostados; el perdedor los pierde. Así de simple.
 Si el retado tiene /mensaje activo, el bot le avisa del reto por DM.
 
-Comandos: /grow · /top · /pvp · /pvp aceptar
+Comandos: /grow · /top · /give · /pvp · /pvp aceptar
 
 Comandos de administrador:
 • /eliminar_usuario - Elimina un usuario del registro de menciones
@@ -2339,6 +2343,114 @@ def growth_top_command(message):
     except Exception as e:
         logging.error(f"Error en comando top: {e}")
         safe_reply_to(message, "❌ No se pudo cargar el ranking.", parse_mode=None)
+
+
+@bot.message_handler(commands=['give'])
+def growth_give_command(message):
+    """Regala cm a otro usuario: responder mensaje con /give N."""
+    try:
+        if not GROWTH_TABLES_READY:
+            growth_tables_missing_reply(message)
+            return
+        if message.chat.type not in ('group', 'supergroup'):
+            safe_reply_to(message, "❌ /give solo funciona en grupos.", parse_mode=None)
+            return
+
+        replied = message.reply_to_message
+        if not replied or not getattr(replied, 'from_user', None):
+            safe_reply_to(
+                message,
+                "📌 Responde el mensaje de quien quieres regalar cm y escribe:\n`/give <cm>`\n\n"
+                "Ejemplo: respondes su mensaje y escribes `/give 100`.",
+                parse_mode=None,
+            )
+            return
+
+        target = replied.from_user
+        if getattr(target, 'is_bot', False):
+            safe_reply_to(message, "❌ No puedes regalar cm a un bot.", parse_mode=None)
+            return
+        if target.id == message.from_user.id:
+            safe_reply_to(message, "❌ No puedes regalarte cm a ti mismo.", parse_mode=None)
+            return
+
+        parts = (message.text or '').split()
+        if len(parts) < 2:
+            safe_reply_to(
+                message,
+                "📌 Indica cuántos cm quieres regalar: `/give 100` (respondiendo al mensaje de la otra persona).",
+                parse_mode=None,
+            )
+            return
+
+        try:
+            amount = int(parts[1])
+        except ValueError:
+            safe_reply_to(
+                message,
+                "📌 La cantidad debe ser un número entero. Ejemplo: `/give 100`",
+                parse_mode=None,
+            )
+            return
+
+        if amount < 1:
+            safe_reply_to(message, "❌ La cantidad mínima es 1 cm.", parse_mode=None)
+            return
+
+        chat_id = message.chat.id
+        giver = message.from_user
+        giver_row = growth_fetch_row(chat_id, giver.id)
+        giver_cm = int(giver_row['cm']) if giver_row else 0
+
+        if giver_cm < amount:
+            safe_reply_to(
+                message,
+                f"❌ No tienes cm suficientes. Tienes {giver_cm} cm e intentas regalar {amount} cm.",
+                parse_mode=None,
+            )
+            return
+
+        target_row = growth_fetch_row(chat_id, target.id)
+        target_cm = int(target_row['cm']) if target_row else 0
+        new_giver_cm = max(0, giver_cm - amount)
+        new_target_cm = target_cm + amount
+
+        growth_upsert_row(
+            chat_id,
+            giver.id,
+            new_giver_cm,
+            last_grow_at=giver_row.get('last_grow_at') if giver_row else None,
+            username=giver.username,
+            first_name=giver.first_name or '',
+        )
+        growth_upsert_row(
+            chat_id,
+            target.id,
+            new_target_cm,
+            last_grow_at=target_row.get('last_grow_at') if target_row else None,
+            username=target.username,
+            first_name=target.first_name or '',
+        )
+
+        giver_handle = giver.username
+        giver_label = f"@{giver_handle}" if giver_handle else (giver.first_name or giver.id)
+        targ_handle = target.username
+        targ_label = f"@{targ_handle}" if targ_handle else (target.first_name or target.id)
+
+        msg = (
+            f"🎁 {giver_label} regaló {amount} cm a {targ_label}.\n\n"
+            f"📤 {giver_label}: {giver_cm} → {new_giver_cm} cm\n"
+            f"📥 {targ_label}: {target_cm} → {new_target_cm} cm"
+        )
+        safe_reply_to(message, msg, parse_mode=None)
+        log_user_action(
+            giver.id,
+            'GROW_GIVE',
+            f"chat={chat_id} to={target.id} amount={amount} giver_cm={new_giver_cm} target_cm={new_target_cm}",
+        )
+    except Exception as e:
+        logging.error(f"Error en comando give: {e}")
+        safe_reply_to(message, "❌ No se pudo procesar /give.", parse_mode=None)
 
 
 @bot.message_handler(commands=['pvp'])
